@@ -1,0 +1,107 @@
+version: "3.9"
+
+# ── Local / Portainer stack ───────────────────────────────────────────────────
+# Usage:
+#   1. Copy .env.example to .env and fill in all values
+#   2. docker compose up -d
+#   3. Open Portainer → Stacks → Add stack → paste this file
+
+services:
+
+  # ── SchoolBot app ────────────────────────────────────────────────────────────
+  schoolbot:
+    build: .
+    container_name: schoolbot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      waha:
+        condition: service_started
+    volumes:
+      - /tmp/schoolbot-reports:/tmp/reports
+    networks:
+      - schoolbot-net
+
+  # ── WhatsApp gateway (waha) ───────────────────────────────────────────────────
+  # Docs: https://waha.devlike.pro
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - waha-sessions:/app/.sessions
+    environment:
+      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+      - WAHA_DASHBOARD_USERNAME=admin
+      - WAHA_DASHBOARD_PASSWORD=schoolbot123
+      - WAHA_API_KEY=schoolbot123
+      - WHATSAPP_HOOK_URL=http://schoolbot:8000/webhook/whatsapp
+      - WHATSAPP_HOOK_EVENTS=message
+    networks:
+      - schoolbot-net
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: schoolbot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: schoolbot
+      POSTGRES_USER: schoolbot
+      POSTGRES_PASSWORD: schoolbot   # override in .env for production
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schoolbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - schoolbot-net
+
+  # ── Caddy (HTTPS reverse proxy) ───────────────────────────────────────────────
+  # Required for waha webhooks (WhatsApp needs HTTPS)
+  caddy:
+    image: caddy:2-alpine
+    container_name: schoolbot-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - schoolbot-net
+
+  # ── pgAdmin (optional - remove in production) ─────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: schoolbot-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@schoolbot.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - schoolbot-net
+    profiles:
+      - dev   # only starts with: docker compose --profile dev up
+
+volumes:
+  postgres-data:
+  waha-sessions:
+  caddy-data:
+  caddy-config:
+
+networks:
+  schoolbot-net:
+    driver: bridge

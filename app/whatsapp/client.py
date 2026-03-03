@@ -1,0 +1,102 @@
+"""
+Waha WhatsApp HTTP API client.
+"""
+import base64
+import logging
+import time
+from pathlib import Path
+
+import requests
+
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+WA_MAX_LENGTH = 4000
+
+
+class WahaClient:
+    def __init__(self):
+        settings = get_settings()
+        self.base_url = settings.waha_url.rstrip("/")
+        self.session = settings.waha_session
+        self.headers = {}
+        if settings.waha_api_key:
+            self.headers["X-Api-Key"] = settings.waha_api_key
+
+    def send_text(self, chat_id: str, text: str) -> dict:
+        url = f"{self.base_url}/api/sendText"
+        payload = {"chatId": chat_id, "text": text, "session": self.session}
+        try:
+            r = requests.post(url, json=payload, headers=self.headers, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as e:
+            logger.error(f"WA send_text failed to {chat_id}: {e}")
+            return {}
+
+    def send_document(self, chat_id: str, file_path: str, caption: str = "") -> dict:
+        url = f"{self.base_url}/api/sendFile"
+        path = Path(file_path)
+        with open(path, "rb") as f:
+            file_data = base64.b64encode(f.read()).decode()
+        payload = {
+            "chatId": chat_id, "session": self.session, "caption": caption,
+            "file": {"mimetype": "application/pdf", "filename": path.name, "data": file_data},
+        }
+        try:
+            r = requests.post(url, json=payload, headers=self.headers, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as e:
+            logger.error(f"WA send_document failed to {chat_id}: {e}")
+            return {}
+
+    def delete_message(self, chat_id: str, message_id: str) -> bool:
+        url = f"{self.base_url}/api/messages/delete"
+        payload = {"session": self.session, "chatId": chat_id, "messageId": message_id}
+        try:
+            r = requests.delete(url, json=payload, headers=self.headers, timeout=10)
+            if r.status_code in (200, 204):
+                logger.info(f"Deleted message {message_id} in {chat_id}")
+                return True
+            logger.warning(f"delete_message got {r.status_code} for {message_id}: {r.text[:200]}")
+            return False
+        except requests.RequestException as e:
+            logger.warning(f"delete_message failed for {message_id}: {e}")
+            return False
+
+    def resolve_phone(self, jid: str) -> str:
+        if "@c.us" in jid:
+            return jid.replace("@c.us", "")
+        if "@lid" in jid:
+            try:
+                url = f"{self.base_url}/api/contacts/{jid}"
+                r = requests.get(url, params={"session": self.session}, headers=self.headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    number = data.get("number") or data.get("id", "")
+                    return number.replace("@c.us", "").replace("+", "")
+            except Exception as e:
+                logger.warning(f"Could not resolve @lid {jid}: {e}")
+            return jid.replace("@lid", "")
+        return jid.split("@")[0]
+
+    def send_chunked(self, chat_id: str, text: str) -> None:
+        if len(text) <= WA_MAX_LENGTH:
+            self.send_text(chat_id, text)
+            return
+        chunks: list[str] = []
+        current = ""
+        for line in text.split("\n"):
+            if len(current) + len(line) + 1 <= WA_MAX_LENGTH:
+                current += line + "\n"
+            else:
+                chunks.append(current)
+                current = line + "\n"
+        if current:
+            chunks.append(current)
+        for i, chunk in enumerate(chunks, 1):
+            if len(chunks) > 1:
+                chunk = f"*Parte {i}/{len(chunks)}*\n{chunk}"
+            self.send_text(chat_id, chunk)
+            time.sleep(0.5)

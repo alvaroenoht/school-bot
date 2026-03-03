@@ -1,0 +1,32 @@
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# Database
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+alembic==1.13.3
+
+# Scheduler
+apscheduler==3.10.4
+
+# HTTP
+requests==2.32.3
+
+# WhatsApp / OpenAI
+openai==1.51.0
+
+# Encryption
+cryptography==43.0.1
+
+# Timezone
+pytz==2024.2
+
+# PDF generation
+reportlab==4.2.2
+
+# Settings
+pydantic-settings==2.5.2
+
+# HTML parsing (used in seduca_client)
+beautifulsoup4==4.12.3

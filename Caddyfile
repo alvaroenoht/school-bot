@@ -1,0 +1,12 @@
+# ── Local development (replace with your domain for production) ──────────────
+# For local testing use your server's local IP or a tool like ngrok
+# For production: replace "localhost" with your actual domain
+
+localhost {
+    reverse_proxy schoolbot:8000
+}
+
+# Production example (uncomment and set your domain):
+# schoolbot.yourdomain.com {
+#     reverse_proxy schoolbot:8000
+# }

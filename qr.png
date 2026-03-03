@@ -1,0 +1,1 @@
+{"message":"We didn't find a session with name 'default'.\nPlease start it first by using POST /api/sessions/default/start request","error":"Not Found","statusCode":404}

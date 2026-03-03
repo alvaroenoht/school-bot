@@ -1,0 +1,150 @@
+"""
+Assignment sync job — fetches assignments from Seduca for all classrooms
+and upserts them into the database via GPT analysis.
+
+Refactored from the original seduca_sync.py AppDaemon class.
+"""
+import logging
+from datetime import datetime
+
+from app.api.gpt_analyzer import analyze_materials
+from app.api.seduca_client import SeducaClient
+from app.db.database import SessionLocal
+from app.db import models
+from app.utils.crypto import decrypt
+from app.utils.helpers import shorten_url
+
+logger = logging.getLogger(__name__)
+
+
+async def run_sync(classroom_id: int | None = None):
+    """
+    Sync assignments for all active classrooms (or one specific classroom).
+    Safe to call from the scheduler or an admin command.
+    """
+    db = SessionLocal()
+    try:
+        query = db.query(models.Parent).filter(
+            models.Parent.classroom_id.isnot(None),
+            models.Parent.encrypted_username.isnot(None),
+        )
+        if classroom_id:
+            query = query.filter(models.Parent.classroom_id == classroom_id)
+
+        parents = query.all()
+        if not parents:
+            logger.warning("No registered parents found for sync.")
+            return
+
+        for parent in parents:
+            classroom = db.query(models.Classroom).get(parent.classroom_id)
+            if not classroom or not classroom.is_active:
+                continue
+
+            try:
+                username = decrypt(parent.encrypted_username)
+                password = decrypt(parent.encrypted_password)
+            except Exception as e:
+                logger.error(f"Could not decrypt credentials for classroom {parent.classroom_id}: {e}")
+                continue
+
+            client = SeducaClient(username, password, base_url=classroom.school_url)
+            if not client.login():
+                logger.error(f"Login failed for classroom {parent.classroom_id} ({classroom.name})")
+                continue
+
+            logger.info(f"Syncing classroom {parent.classroom_id} ({classroom.name})")
+
+            for student_id in (parent.student_ids or []):
+                if not client.switch_child(student_id):
+                    logger.warning(f"Could not switch to student {student_id}")
+                    continue
+
+                items = client.fetch_assignment_list()
+                logger.info(f"  {len(items)} assignments fetched for student {student_id}")
+
+                for item in items:
+                    try:
+                        _upsert_assignment(item, student_id, client, db)
+                    except Exception as e:
+                        logger.error(f"  Error processing assignment {item.get('asigId')}: {e}")
+
+                db.commit()
+
+            logger.info(f"Sync complete for classroom {parent.classroom_id}")
+
+    finally:
+        db.close()
+
+
+# ── Private helpers ────────────────────────────────────────────────────────────
+
+def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db):
+    asig_id     = int(item["asigId"])
+    title       = item["asigNombre"]
+    date        = item["asigFecha"]
+    created_at  = item["asigCreado"]
+    type_       = item["asigTipo"]
+    subject_id  = int(item["asigMateriaId"])
+
+    existing = db.query(models.Assignment).filter_by(
+        id=asig_id, student_id=student_id
+    ).first()
+
+    description_html = client.fetch_assignment_description(asig_id)
+    if not description_html:
+        logger.warning(f"  No description for assignment {asig_id}, skipping.")
+        return
+
+    link      = f"{client.base_url}/2/parent/assignments/show?id={asig_id}"
+    short_url = shorten_url(link)
+
+    # Only call GPT if description changed or summary is missing
+    if existing and existing.description == description_html and existing.summary and existing.materials is not None:
+        materials = existing.materials
+        summary   = existing.summary
+        needs_update = (
+            existing.title != title
+            or existing.date != date
+            or existing.short_url != short_url
+        )
+    else:
+        logger.debug(f"  Calling GPT for assignment {asig_id}...")
+        analysis  = analyze_materials(title, description_html)
+        materials = ", ".join(analysis["materials"]) if analysis.get("needs_materials") else ""
+        summary   = analysis.get("summary", "")
+        needs_update = True
+
+    if not needs_update and existing:
+        return
+
+    now = datetime.utcnow().isoformat()
+
+    if existing:
+        existing.title       = title
+        existing.date        = date
+        existing.created_at  = created_at
+        existing.type        = type_
+        existing.subject_id  = subject_id
+        existing.description = description_html
+        existing.materials   = materials
+        existing.summary     = summary
+        existing.updated_at  = now
+        existing.short_url   = short_url
+        logger.debug(f"  Updated assignment {asig_id}")
+    else:
+        db.add(models.Assignment(
+            id=asig_id,
+            student_id=student_id,
+            title=title,
+            subject_id=subject_id,
+            type=type_,
+            date=date,
+            created_at=created_at,
+            description=description_html,
+            materials=materials,
+            summary=summary,
+            updated_at=now,
+            short_url=short_url,
+        ))
+        logger.debug(f"  Inserted new assignment {asig_id}")
