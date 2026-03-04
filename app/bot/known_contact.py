@@ -86,7 +86,7 @@ async def handle(
         wa.send_text(
             chat_id,
             f"\u2705 \u00a1Listo, *{data['name']}*! Quedaste registrado/a.\n\n"
-            "Ahora puedes usar el comando `pagar <nombre>` "
+            "Ahora puedes usar el comando `/pagar <nombre>` "
             "para pagar actividades escolares.",
         )
 

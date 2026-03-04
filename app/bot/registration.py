@@ -223,7 +223,7 @@ async def handle(
             for s, cid in classroom_info
         )
         vincular_lines = "\n".join(
-            f"  \u2022 Grupo de *{s['grade']}* \u2192 `vincular {cid}`"
+            f"  \u2022 Grupo de *{s['grade']}* \u2192 `/vincular {cid}`"
             for s, cid in classroom_info
         )
         wa.send_text(

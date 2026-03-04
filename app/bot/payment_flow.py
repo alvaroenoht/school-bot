@@ -39,9 +39,10 @@ async def start_from_command(
 ):
     """Start a payment flow from a 'pay/pagar <name>' command."""
     # Extract fundraiser name from command
-    match = re.match(r"(?:pay|pagar)\s+(.+)", text, re.IGNORECASE)
+    clean = text.lstrip("/")
+    match = re.match(r"(?:pay|pagar)\s+(.+)", clean, re.IGNORECASE)
     if not match:
-        wa.send_text(chat_id, "Uso: `pagar <nombre de la actividad>`")
+        wa.send_text(chat_id, "Uso: `/pagar <nombre de la actividad>`")
         return
 
     search = match.group(1).strip()

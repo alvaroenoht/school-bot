@@ -28,7 +28,7 @@ wa = WahaClient()
 
 async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session) -> bool:
     """Handle all fundraiser admin commands.  Returns True if handled."""
-    parts = text.strip().split(None, 2)
+    parts = text.strip().lstrip("/").split(None, 2)
     # parts[0] = "fundraiser", parts[1] = sub-command, parts[2] = argument (optional)
     if len(parts) < 2:
         wa.send_text(chat_id, _HELP)
@@ -40,7 +40,7 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
     if sub == "create" or sub == "crear":
         name = parts[2].strip() if len(parts) > 2 else None
         if not name:
-            wa.send_text(chat_id, "Uso: `fundraiser create <nombre>`")
+            wa.send_text(chat_id, "Uso: `/fundraiser create <nombre>`")
             return True
         # Start conversational flow
         existing = db.query(models.ConversationSession).filter_by(chat_jid=chat_id).first()
@@ -84,7 +84,7 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
     if sub == "close" or sub == "cerrar":
         fid = parts[2].strip() if len(parts) > 2 else ""
         if not fid.isdigit():
-            wa.send_text(chat_id, "Uso: `fundraiser close <id>`")
+            wa.send_text(chat_id, "Uso: `/fundraiser close <id>`")
             return True
         fund = db.query(models.Fundraiser).get(int(fid))
         if not fund:
@@ -100,7 +100,7 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
     if sub == "delete" or sub == "eliminar":
         fid = parts[2].strip() if len(parts) > 2 else ""
         if not fid.isdigit():
-            wa.send_text(chat_id, "Uso: `fundraiser delete <id>`")
+            wa.send_text(chat_id, "Uso: `/fundraiser delete <id>`")
             return True
         fund = db.query(models.Fundraiser).get(int(fid))
         if not fund:
@@ -123,7 +123,7 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
     if sub == "report" or sub == "reporte":
         fid = parts[2].strip() if len(parts) > 2 else ""
         if not fid.isdigit():
-            wa.send_text(chat_id, "Uso: `fundraiser report <id>`")
+            wa.send_text(chat_id, "Uso: `/fundraiser report <id>`")
             return True
         fund = db.query(models.Fundraiser).get(int(fid))
         if not fund:
@@ -263,7 +263,7 @@ async def handle_conversation(
             wa.send_text(
                 chat_id,
                 f"\u2705 Actividad *{fund.name}* creada (ID `{fund.id}`).\n\n"
-                f"Los padres pueden pagar con: `pagar {fund.name}`",
+                f"Los padres pueden pagar con: `/pagar {fund.name}`",
             )
         elif text.lower() in ("no", "cancelar", "cancel"):
             db.delete(session)
@@ -277,11 +277,11 @@ async def handle_conversation(
 
 _HELP = (
     "\U0001f4cb *Comandos de actividades:*\n\n"
-    "  `fundraiser create <nombre>` \u2014 crear nueva\n"
-    "  `fundraiser list` \u2014 listar todas\n"
-    "  `fundraiser close <id>` \u2014 cerrar\n"
-    "  `fundraiser delete <id>` \u2014 eliminar (sin pagos)\n"
-    "  `fundraiser report <id>` \u2014 reporte PDF"
+    "  `/fundraiser create <nombre>` \u2014 crear nueva\n"
+    "  `/fundraiser list` \u2014 listar todas\n"
+    "  `/fundraiser close <id>` \u2014 cerrar\n"
+    "  `/fundraiser delete <id>` \u2014 eliminar (sin pagos)\n"
+    "  `/fundraiser report <id>` \u2014 reporte PDF"
 )
 
 

@@ -48,7 +48,8 @@ def _strip_mention(text: str, bot_phone: str) -> str:
 
 
 def _is_pay_command(text: str) -> bool:
-    return text.lower().startswith(("pay ", "pagar "))
+    t = text.lstrip("/").lower()
+    return t.startswith(("pay ", "pagar "))
 
 
 @router.post("/webhook/whatsapp")
@@ -86,8 +87,8 @@ async def whatsapp_webhook(request: Request):
         if _is_group(chat_id):
 
             # vincular <id> \u2014 no @mention needed, sender must be registered parent
-            if raw_text.lower().startswith("vincular "):
-                _handle_vincular(raw_jid, chat_id, raw_text, db, wa)
+            if raw_text.lstrip("/").lower().startswith("vincular "):
+                _handle_vincular(raw_jid, chat_id, raw_text.lstrip("/"), db, wa)
                 return {"status": "ok"}
 
             # All other group messages require @mention
@@ -134,7 +135,7 @@ async def whatsapp_webhook(request: Request):
             if conv and conv.flow == "fundraiser_create":
                 await fundraiser_admin.handle_conversation(raw_jid, chat_id, raw_text, db, conv)
                 return {"status": "ok"}
-            handled = await admin_commands.handle(from_phone, chat_id, raw_text, db)
+            handled = await admin_commands.handle(from_phone, chat_id, raw_text, db)  # / stripped inside handle()
             if handled:
                 return {"status": "ok"}
 
@@ -183,7 +184,7 @@ async def whatsapp_webhook(request: Request):
                 wa.send_text(
                     chat_id,
                     f"Hola *{contact.name}*! Puedes usar:\n"
-                    "  \u2022 `pagar <nombre>` \u2014 pagar una actividad escolar",
+                    "  \u2022 `/pagar <nombre>` \u2014 pagar una actividad escolar",
                 )
             return {"status": "ok"}
 
