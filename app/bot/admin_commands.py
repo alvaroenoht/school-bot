@@ -62,12 +62,17 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
         if parents:
             lines.append("👨‍👩‍👧 *Padres registrados:*\n")
             for p in parents:
-                classroom = db.query(models.Classroom).get(p.classroom_id) if p.classroom_id else None
-                group_status = "✅ vinculado" if (classroom and classroom.whatsapp_group_id) else "⏳ sin grupo"
-                lines.append(
-                    f"• [ID `{p.id}`] *{p.first_name} {p.last_name}*\n"
-                    f"  Salón: `{classroom.id if classroom else 'N/A'}` — Grupo: {group_status}"
-                )
+                students = db.query(models.Student).filter_by(parent_id=p.id).all()
+                lines.append(f"• [ID `{p.id}`] *{p.first_name} {p.last_name}*")
+                if students:
+                    for s in students:
+                        classroom = db.query(models.Classroom).get(s.classroom_id) if s.classroom_id else None
+                        group_status = "✅ vinculado" if (classroom and classroom.whatsapp_group_id) else "⏳ sin grupo"
+                        lines.append(
+                            f"  └ {s.name} ({s.grade}) — Salón `{classroom.id if classroom else 'N/A'}` — {group_status}"
+                        )
+                else:
+                    lines.append("  _Sin estudiantes registrados_")
         else:
             lines.append("👨‍👩‍👧 _No hay padres registrados._")
 
@@ -94,10 +99,13 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
             return True
 
         parent.is_active = False
-        if parent.classroom_id:
-            classroom = db.query(models.Classroom).get(parent.classroom_id)
-            if classroom:
-                classroom.is_active = False
+        # Deactivate all classrooms linked to this parent's students
+        students = db.query(models.Student).filter_by(parent_id=parent.id).all()
+        for s in students:
+            if s.classroom_id:
+                classroom = db.query(models.Classroom).get(s.classroom_id)
+                if classroom:
+                    classroom.is_active = False
         db.commit()
 
         wa.send_text(

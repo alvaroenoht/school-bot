@@ -26,6 +26,7 @@ import logging
 from datetime import datetime
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.seduca_client import SeducaClient
 from app.db import models
@@ -173,18 +174,12 @@ async def handle(
 
         student_ids = [s["id"] for s in students]
 
-        # Create classroom and parent records
-        new_classroom = models.Classroom(
-            name=f"Salón {data['first_name']} {data['last_name']}",
-        )
-        db.add(new_classroom)
-        db.flush()
-
+        # Create parent record (no single classroom_id -- one per student)
         parent = models.Parent(
             first_name=data["first_name"],
             last_name=data["last_name"],
             whatsapp_jid=raw_jid,
-            classroom_id=new_classroom.id,
+            classroom_id=None,
             encrypted_username=data["enc_username"],
             encrypted_password=data["enc_password"],
             student_ids=student_ids,
@@ -192,6 +187,26 @@ async def handle(
         )
         db.add(parent)
         db.flush()
+
+        # Create one classroom + student record per child
+        classroom_info = []  # [(student_dict, classroom_id)]
+        for s in students:
+            classroom = models.Classroom(
+                name=f"{s['name']} - {s['grade']}",
+            )
+            db.add(classroom)
+            db.flush()
+
+            student_rec = models.Student(
+                id=s["id"],
+                name=s["name"],
+                grade=s["grade"],
+                classroom_id=classroom.id,
+                parent_id=parent.id,
+            )
+            db.merge(student_rec)
+            db.flush()
+            classroom_info.append((s, classroom.id))
 
         # Mark invite code as used
         invite_obj = db.query(models.InviteCode).get(data["invite_code_id"])
@@ -203,17 +218,24 @@ async def handle(
         db.delete(session)
         db.commit()
 
-        student_lines = "\n".join(f"  • {s['name']} ({s['grade']})" for s in students)
+        student_lines = "\n".join(
+            f"  \u2022 *{s['name']}* ({s['grade']}) \u2014 sal\u00f3n `{cid}`"
+            for s, cid in classroom_info
+        )
+        vincular_lines = "\n".join(
+            f"  \u2022 Grupo de *{s['grade']}* \u2192 `vincular {cid}`"
+            for s, cid in classroom_info
+        )
         wa.send_text(
             chat_id,
-            f"✅ *¡Registro completado, {parent.first_name}!*\n\n"
-            f"👤 *Estudiantes encontrados:*\n{student_lines}\n\n"
-            f"📚 ID de tu salón: `{new_classroom.id}`\n\n"
-            "Recibirás el resumen cada *jueves a las 6pm* y un recordatorio "
-            "cada mañana de lunes a viernes. 🎉\n\n"
-            "📌 *Último paso:* agrégame a tu grupo de WhatsApp y envía "
-            f"`vincular {new_classroom.id}` desde el grupo _(sin necesidad de mencionarme)_.\n\n"
-            "🧹 Por seguridad, te recomendamos borrar el historial de este chat.",
+            f"\u2705 *\u00a1Registro completado, {parent.first_name}!*\n\n"
+            f"\ud83d\udc64 *Estudiantes encontrados:*\n{student_lines}\n\n"
+            "Recibir\u00e1s el resumen cada *jueves a las 6pm* y un recordatorio "
+            "cada ma\u00f1ana de lunes a viernes. \ud83c\udf89\n\n"
+            "\ud83d\udccc *\u00daltimo paso:* agr\u00e9game a tus grupos de WhatsApp "
+            "y env\u00eda el comando correspondiente:\n"
+            f"{vincular_lines}\n\n"
+            "\ud83e\uddf9 Por seguridad, te recomendamos borrar el historial de este chat.",
         )
 
     # ── verifying — login already running, ignore extra messages ──────────────
@@ -225,6 +247,7 @@ async def handle(
 
 def _update(session: models.RegistrationSession, state: str, data: dict, db: Session):
     session.state = state
-    session.data = data
+    session.data = dict(data)
+    flag_modified(session, "data")  # required: SQLAlchemy won't detect JSON mutations otherwise
     session.updated_at = datetime.utcnow()
     db.commit()

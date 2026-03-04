@@ -99,9 +99,14 @@ async def whatsapp_webhook(request: Request):
                 # Group not linked — silently ignore (don't reveal the bot is here)
                 return {"status": "ignored"}
 
-            parent = db.query(models.Parent).filter_by(
-                classroom_id=classroom.id, is_active=True
+            # Find parent via student linked to this classroom
+            student = db.query(models.Student).filter_by(
+                classroom_id=classroom.id
             ).first()
+            parent = (
+                db.query(models.Parent).get(student.parent_id)
+                if student else None
+            )
             if parent:
                 await qa_handler.handle(raw_jid, chat_id, clean_text, db, parent)
             return {"status": "ok"}
@@ -131,7 +136,7 @@ async def whatsapp_webhook(request: Request):
         parent = db.query(models.Parent).filter_by(
             whatsapp_jid=raw_jid, is_active=True
         ).first()
-        if parent and parent.classroom_id:
+        if parent:
             await qa_handler.handle(raw_jid, chat_id, raw_text, db, parent)
             return {"status": "ok"}
 
@@ -171,7 +176,11 @@ def _handle_vincular(raw_jid: str, chat_id: str, text: str, db, wa: WahaClient):
         # Sender is not a registered parent — silently ignore
         return
 
-    if parent.classroom_id != classroom_id:
+    # Check classroom belongs to one of the parent's students
+    student = db.query(models.Student).filter_by(
+        classroom_id=classroom_id, parent_id=parent.id
+    ).first()
+    if not student:
         wa.send_text(chat_id, f"❌ El salón `{classroom_id}` no corresponde a tu registro.")
         return
 

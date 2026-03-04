@@ -44,6 +44,7 @@ class Parent(Base):
     created_at          = Column(DateTime, default=datetime.utcnow)
 
     classroom = relationship("Classroom", back_populates="parents")
+    students  = relationship("Student", back_populates="parent")
 
 
 class InviteCode(Base):
@@ -81,8 +82,10 @@ class Student(Base):
     name         = Column(String, nullable=False)
     grade        = Column(String, nullable=False)
     classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    parent_id    = Column(Integer, ForeignKey("parents.id"), nullable=True)
 
     classroom    = relationship("Classroom", back_populates="students")
+    parent       = relationship("Parent", back_populates="students")
     assignments  = relationship("Assignment", back_populates="student")
 
 

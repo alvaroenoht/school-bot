@@ -24,54 +24,65 @@ async def run_sync(classroom_id: int | None = None):
     """
     db = SessionLocal()
     try:
-        query = db.query(models.Parent).filter(
-            models.Parent.classroom_id.isnot(None),
+        # Get parents with credentials
+        parent_query = db.query(models.Parent).filter(
             models.Parent.encrypted_username.isnot(None),
+            models.Parent.is_active == True,
         )
-        if classroom_id:
-            query = query.filter(models.Parent.classroom_id == classroom_id)
-
-        parents = query.all()
+        parents = parent_query.all()
         if not parents:
             logger.warning("No registered parents found for sync.")
             return
 
         for parent in parents:
-            classroom = db.query(models.Classroom).get(parent.classroom_id)
-            if not classroom or not classroom.is_active:
+            # Get students linked to this parent
+            student_query = db.query(models.Student).filter_by(parent_id=parent.id)
+            if classroom_id:
+                student_query = student_query.filter_by(classroom_id=classroom_id)
+            students = student_query.all()
+            if not students:
                 continue
 
             try:
                 username = decrypt(parent.encrypted_username)
                 password = decrypt(parent.encrypted_password)
             except Exception as e:
-                logger.error(f"Could not decrypt credentials for classroom {parent.classroom_id}: {e}")
+                logger.error(f"Could not decrypt credentials for parent {parent.id}: {e}")
                 continue
 
-            client = SeducaClient(username, password, base_url=classroom.school_url)
+            # Use school_url from the first student's classroom
+            first_classroom = db.query(models.Classroom).get(students[0].classroom_id)
+            if not first_classroom:
+                continue
+
+            client = SeducaClient(username, password, base_url=first_classroom.school_url)
             if not client.login():
-                logger.error(f"Login failed for classroom {parent.classroom_id} ({classroom.name})")
+                logger.error(f"Login failed for parent {parent.id} ({parent.first_name} {parent.last_name})")
                 continue
 
-            logger.info(f"Syncing classroom {parent.classroom_id} ({classroom.name})")
+            logger.info(f"Syncing parent {parent.id} ({parent.first_name} {parent.last_name})")
 
-            for student_id in (parent.student_ids or []):
-                if not client.switch_child(student_id):
-                    logger.warning(f"Could not switch to student {student_id}")
+            for student in students:
+                classroom = db.query(models.Classroom).get(student.classroom_id)
+                if not classroom or not classroom.is_active:
+                    continue
+
+                if not client.switch_child(student.id):
+                    logger.warning(f"Could not switch to student {student.id}")
                     continue
 
                 items = client.fetch_assignment_list()
-                logger.info(f"  {len(items)} assignments fetched for student {student_id}")
+                logger.info(f"  {len(items)} assignments fetched for student {student.id}")
 
                 for item in items:
                     try:
-                        _upsert_assignment(item, student_id, client, db)
+                        _upsert_assignment(item, student.id, client, db)
                     except Exception as e:
                         logger.error(f"  Error processing assignment {item.get('asigId')}: {e}")
 
                 db.commit()
 
-            logger.info(f"Sync complete for classroom {parent.classroom_id}")
+            logger.info(f"Sync complete for parent {parent.id}")
 
     finally:
         db.close()

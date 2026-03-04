@@ -111,6 +111,33 @@ class SeducaClient:
             print(f"Error fetching description for {asig_id}: {e}")
             return None
 
+    def fetch_students(self) -> List[Dict]:
+        """
+        Scrape the list of children from the parent portal dropdown.
+        Returns [{"id": int, "name": str, "grade": str}, ...]
+        """
+        url = f"{self.base_url}/2/parent/assignments/index"
+        try:
+            res = self.session.get(url)
+            if res.status_code != 200:
+                return []
+            # Each child appears as: changeUser(ID,...) ... <span data-halfname="...">Name - Grade</span>
+            blocks = re.findall(
+                r'changeUser\((\d+)[^)]*\).*?<span[^>]*data-halfname[^>]*>\s*([^<]+?)\s*</span>',
+                res.text,
+                re.DOTALL,
+            )
+            students = []
+            for child_id, name_grade in blocks:
+                parts = name_grade.strip().rsplit(" - ", 1)
+                name = parts[0].strip()
+                grade = parts[1].strip() if len(parts) > 1 else ""
+                students.append({"id": int(child_id), "name": name, "grade": grade})
+            return students
+        except Exception as e:
+            print(f"fetch_students error: {e}")
+            return []
+
     def fetch_calendar(self, start: str, end: str) -> Optional[List[Dict]]:
         url = f"{self.base_url}/2/parent/calendar/json"
         params = {"start": start, "end": end, "timeZone": "America/Panama"}

@@ -40,11 +40,16 @@ async def send_weekly_summaries():
                 logger.warning(f"Classroom {classroom.id} has no WhatsApp group — skipping.")
                 continue
 
-            parent = db.query(models.Parent).filter_by(classroom_id=classroom.id).first()
+            # Find students linked to this classroom
+            student = db.query(models.Student).filter_by(classroom_id=classroom.id).first()
+            if not student or not student.parent_id:
+                continue
+
+            parent = db.query(models.Parent).get(student.parent_id)
             if not parent:
                 continue
 
-            for student_id in (parent.student_ids or []):
+            for student_id in [student.id]:
                 # Text summary
                 raw_conn = db.connection()
                 message = generate_weekly_summary(raw_conn, student_id, start, end)
@@ -83,11 +88,16 @@ async def send_daily_reminders():
             if not classroom.whatsapp_group_id:
                 continue
 
-            parent = db.query(models.Parent).filter_by(classroom_id=classroom.id).first()
+            # Find students linked to this classroom
+            student = db.query(models.Student).filter_by(classroom_id=classroom.id).first()
+            if not student or not student.parent_id:
+                continue
+
+            parent = db.query(models.Parent).get(student.parent_id)
             if not parent:
                 continue
 
-            for student_id in (parent.student_ids or []):
+            for student_id in [student.id]:
                 assignments = (
                     db.query(models.Assignment)
                     .filter(

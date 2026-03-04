@@ -52,10 +52,9 @@ class WahaClient:
             return {}
 
     def delete_message(self, chat_id: str, message_id: str) -> bool:
-        url = f"{self.base_url}/api/messages/delete"
-        payload = {"session": self.session, "chatId": chat_id, "messageId": message_id}
+        url = f"{self.base_url}/api/{self.session}/chats/{chat_id}/messages/{message_id}"
         try:
-            r = requests.delete(url, json=payload, headers=self.headers, timeout=10)
+            r = requests.delete(url, headers=self.headers, timeout=10)
             if r.status_code in (200, 204):
                 logger.info(f"Deleted message {message_id} in {chat_id}")
                 return True
@@ -70,8 +69,8 @@ class WahaClient:
             return jid.replace("@c.us", "")
         if "@lid" in jid:
             try:
-                url = f"{self.base_url}/api/contacts/{jid}"
-                r = requests.get(url, params={"session": self.session}, headers=self.headers, timeout=10)
+                url = f"{self.base_url}/api/contacts"
+                r = requests.get(url, params={"session": self.session, "contactId": jid}, headers=self.headers, timeout=10)
                 if r.status_code == 200:
                     data = r.json()
                     number = data.get("number") or data.get("id", "")
