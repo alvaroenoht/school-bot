@@ -80,6 +80,60 @@ class WahaClient:
             return jid.replace("@lid", "")
         return jid.split("@")[0]
 
+
+    def download_media(self, message_id: str) -> bytes | None:
+        """Download media (image/document) from a received message."""
+        url = f"{self.base_url}/api/{self.session}/messages/{message_id}/download"
+        try:
+            r = requests.get(url, headers=self.headers, timeout=30)
+            if r.status_code == 200:
+                return r.content
+            logger.warning(f"download_media got {r.status_code} for {message_id}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"download_media failed for {message_id}: {e}")
+            return None
+
+    def get_group_participants(self, group_id: str) -> list[str]:
+        """Get participant JIDs for a WhatsApp group."""
+        url = f"{self.base_url}/api/{self.session}/groups"
+        try:
+            r = requests.get(url, headers=self.headers, timeout=15)
+            if r.status_code == 200:
+                groups = r.json()
+                for g in groups:
+                    gid = g.get("id", "")
+                    if gid == group_id:
+                        return [
+                            p.get("id", "") for p in g.get("participants", [])
+                        ]
+            return []
+        except requests.RequestException as e:
+            logger.error(f"get_group_participants failed for {group_id}: {e}")
+            return []
+
+    def send_image(self, chat_id: str, image_data: bytes, caption: str = "") -> dict:
+        """Send an image to a chat."""
+        url = f"{self.base_url}/api/sendFile"
+        import base64 as b64mod
+        encoded = b64mod.b64encode(image_data).decode()
+        payload = {
+            "chatId": chat_id,
+            "session": self.session,
+            "caption": caption,
+            "file": {
+                "mimetype": "image/jpeg",
+                "filename": "image.jpg",
+                "data": encoded,
+            },
+        }
+        try:
+            r = requests.post(url, json=payload, headers=self.headers, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as e:
+            logger.error(f"WA send_image failed to {chat_id}: {e}")
+            return {}
     def send_chunked(self, chat_id: str, text: str) -> None:
         if len(text) <= WA_MAX_LENGTH:
             self.send_text(chat_id, text)

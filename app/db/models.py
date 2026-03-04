@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey,
+    Boolean, Column, DateTime, Float, ForeignKey,
     Integer, JSON, String, Text,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -118,3 +118,99 @@ class Assignment(Base):
     short_url    = Column(String)
 
     student = relationship("Student", back_populates="assignments")
+
+
+# ── v2.0 Models ───────────────────────────────────────────────────────────────
+
+
+class ConversationSession(Base):
+    """Generic multi-step conversation tracker for fundraiser, payment, and contact flows."""
+    __tablename__ = "conversation_sessions"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    chat_jid   = Column(String, unique=True, nullable=False, index=True)
+    flow       = Column(String, nullable=False)       # "fundraiser_create", "payment", "known_contact"
+    step       = Column(String, nullable=False)
+    data       = Column(JSON, default=dict)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class KnownContact(Base):
+    """Non-registered person identified via WhatsApp group membership."""
+    __tablename__ = "known_contacts"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    jid             = Column(String, unique=True, nullable=False, index=True)
+    name            = Column(String, nullable=False)
+    child_name      = Column(String, nullable=False)
+    source_group_id = Column(String, nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+
+class Fundraiser(Base):
+    """A fundraiser campaign created by admin."""
+    __tablename__ = "fundraisers"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    name           = Column(String, nullable=False)
+    account_number = Column(String, nullable=False)
+    type           = Column(String, nullable=False)       # "fixed" or "variable"
+    fixed_amount   = Column(String, nullable=True)        # only for fixed type
+    status         = Column(String, default="active")     # "active" or "closed"
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    closed_at      = Column(DateTime, nullable=True)
+
+    products = relationship("FundraiserProduct", back_populates="fundraiser", cascade="all, delete-orphan")
+    payments = relationship("Payment", back_populates="fundraiser")
+
+
+class FundraiserProduct(Base):
+    """Product in a variable/catalog fundraiser."""
+    __tablename__ = "fundraiser_products"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    fundraiser_id = Column(Integer, ForeignKey("fundraisers.id"), nullable=False, index=True)
+    name          = Column(String, nullable=False)
+    price         = Column(String, nullable=False)
+    sort_order    = Column(Integer, default=0)
+
+    fundraiser  = relationship("Fundraiser", back_populates="products")
+    order_items = relationship("OrderItem", back_populates="product")
+
+
+class Payment(Base):
+    """A payment/receipt submitted for a fundraiser."""
+    __tablename__ = "payments"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    fundraiser_id     = Column(Integer, ForeignKey("fundraisers.id"), nullable=False, index=True)
+    payer_jid         = Column(String, nullable=False, index=True)
+    payer_name        = Column(String, nullable=False)
+    child_name        = Column(String, nullable=True)
+    amount            = Column(String, nullable=True)
+    confirmation_code = Column(String, nullable=True)
+    receipt_media_url = Column(String, nullable=True)
+    textract_raw      = Column(JSON, nullable=True)
+    confidence_score  = Column(Float, nullable=True)
+    status            = Column(String, default="pending")   # pending / confirmed / flagged
+    flag_reason       = Column(String, nullable=True)
+    submitted_at      = Column(DateTime, default=datetime.utcnow)
+
+    fundraiser  = relationship("Fundraiser", back_populates="payments")
+    order_items = relationship("OrderItem", back_populates="payment")
+
+
+class OrderItem(Base):
+    """Line item in a variable/catalog fundraiser order."""
+    __tablename__ = "order_items"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("fundraiser_products.id"), nullable=False)
+    quantity   = Column(Integer, nullable=False)
+    subtotal   = Column(String, nullable=False)
+
+    payment = relationship("Payment", back_populates="order_items")
+    product = relationship("FundraiserProduct", back_populates="order_items")

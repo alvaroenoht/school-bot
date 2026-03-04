@@ -29,6 +29,11 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
     """
     cmd = text.strip().lower()
 
+    # ── fundraiser ────────────────────────────────────────────────────────────────
+    if cmd.startswith("fundraiser") or cmd.startswith("actividad"):
+        from app.bot import fundraiser_admin
+        return await fundraiser_admin.handle_command(admin_phone, chat_id, text, db)
+
     # ── gencode ────────────────────────────────────────────────────────────────
     if cmd.startswith("gencode"):
         # Optional label after the command, e.g. "gencode Maria Garcia"

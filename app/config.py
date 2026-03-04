@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     summary_time: str = "18:30"        # HH:MM
     reminder_time: str = "07:00"       # HH:MM  Mon-Fri
 
+    # ── AWS (Textract for receipt OCR) ──────────────────────────────────────
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "us-east-1"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
