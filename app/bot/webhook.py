@@ -106,6 +106,12 @@ async def whatsapp_webhook(request: Request):
                 return {"status": "ok"}
 
             # All other group messages require @mention
+            logger.info(
+                "GROUP_DEBUG bot_phone=%s mentionedIds=%s body=%s",
+                settings.waha_bot_phone,
+                payload.get("mentionedIds"),
+                raw_text[:80],
+            )
             if not _is_mentioned(payload, settings.waha_bot_phone):
                 return {"status": "ignored"}
 
