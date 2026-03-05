@@ -14,7 +14,7 @@ apscheduler==3.10.4
 requests==2.32.3
 
 # WhatsApp / OpenAI
-openai==1.51.0
+openai>=1.60.0
 
 # Encryption
 cryptography==43.0.1

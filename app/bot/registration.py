@@ -93,6 +93,18 @@ async def handle(
     state = session.state
     data: dict = session.data or {}
 
+    # ── Cancel / restart at any step ──────────────────────────────────────────
+    if text.lower().strip().lstrip("/") in ("cancelar", "reiniciar", "cancel", "restart"):
+        db.delete(session)
+        db.commit()
+        wa.send_text(
+            chat_id,
+            "🔄 Registro cancelado.\n\n"
+            "Si quieres volver a intentar, envía tu código de invitación.",
+        )
+        logger.info(f"Registration cancelled by user {raw_jid} at state={state}")
+        return
+
     # ── awaiting_first_name ────────────────────────────────────────────────────
     if state == "awaiting_first_name":
         data["first_name"] = text.strip()
@@ -106,7 +118,8 @@ async def handle(
         wa.send_text(
             chat_id,
             f"✅ Perfecto, *{data['first_name']} {data['last_name']}*.\n\n"
-            "Ingresa tu *usuario* del sistema escolar:",
+            "Ingresa tu *usuario* del sistema escolar:\n"
+            "_(o escribe /cancelar para salir)_",
         )
 
     # ── awaiting_username ──────────────────────────────────────────────────────
@@ -148,7 +161,8 @@ async def handle(
             wa.send_text(
                 chat_id,
                 "❌ No pude iniciar sesión con esas credenciales.\n\n"
-                "Verifica e intenta de nuevo. Ingresa tu *usuario*:",
+                "Verifica e intenta de nuevo. Ingresa tu *usuario*:\n"
+                "_(o escribe /cancelar para salir)_",
             )
             _update(session, "awaiting_username", {
                 "invite_code_id": data["invite_code_id"],
@@ -163,7 +177,8 @@ async def handle(
                 chat_id,
                 "⚠️ Credenciales correctas pero no encontré estudiantes vinculados a tu cuenta.\n\n"
                 "Verifica en el portal que tengas estudiantes asignados e intenta de nuevo.\n"
-                "Ingresa tu *usuario*:",
+                "Ingresa tu *usuario*:\n"
+                "_(o escribe /cancelar para salir)_",
             )
             _update(session, "awaiting_username", {
                 "invite_code_id": data["invite_code_id"],

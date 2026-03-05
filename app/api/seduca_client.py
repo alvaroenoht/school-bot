@@ -4,10 +4,13 @@ Seduca school portal API client.
 Adapted from original to support configurable base_url for multi-tenant use.
 """
 import html
+import logging
 import re
 from typing import Dict, List, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class SeducaClient:
@@ -42,7 +45,7 @@ class SeducaClient:
         try:
             res = self.session.post(url, json=payload, headers=headers)
             if res.status_code not in (200, 302):
-                print("Login failed with status:", res.status_code)
+                logger.warning("Seduca login failed (invalid credentials or portal issue)")
                 return False
             warmup_pages = [
                 f"{self.base_url}/2/parent/",
@@ -51,11 +54,11 @@ class SeducaClient:
             for page in warmup_pages:
                 warmup = self.session.get(page, allow_redirects=True)
                 if warmup.status_code != 200:
-                    print("Warm-up session failed.")
+                    logger.warning("Seduca warm-up session failed")
                     return False
             return True
         except requests.RequestException as e:
-            print(f"Login error: {e}")
+            logger.error("Seduca login error: %s", e)
             return False
 
     def switch_child(self, child_id: int) -> bool:
@@ -64,7 +67,7 @@ class SeducaClient:
             res = self.session.get(url)
             return res.status_code == 200
         except requests.RequestException as e:
-            print(f"Switch child error: {e}")
+            logger.error("Switch child error: %s", e)
             return False
 
     def fetch_assignment_list(self) -> List[Dict]:
@@ -92,7 +95,7 @@ class SeducaClient:
             res = self.session.post(url, headers=headers, data=payload)
             return res.json().get("data", [])
         except Exception as e:
-            print(f"Failed to fetch assignments list: {e}")
+            logger.error("Failed to fetch assignments list: %s", e)
             return []
 
     def fetch_assignment_description(self, asig_id: int) -> Optional[str]:
@@ -108,7 +111,7 @@ class SeducaClient:
             decoded = raw_encoded.encode("utf-8").decode("unicode_escape")
             return html.unescape(decoded).strip()
         except Exception as e:
-            print(f"Error fetching description for {asig_id}: {e}")
+            logger.error("Error fetching description for %s: %s", asig_id, e)
             return None
 
     def fetch_students(self) -> List[Dict]:
@@ -135,7 +138,7 @@ class SeducaClient:
                 students.append({"id": int(child_id), "name": name, "grade": grade})
             return students
         except Exception as e:
-            print(f"fetch_students error: {e}")
+            logger.error("fetch_students error: %s", e)
             return []
 
     def fetch_calendar(self, start: str, end: str) -> Optional[List[Dict]]:
@@ -146,5 +149,5 @@ class SeducaClient:
             res.raise_for_status()
             return res.json()
         except requests.RequestException as e:
-            print(f"Calendar fetch error: {e}")
+            logger.error("Calendar fetch error: %s", e)
             return None

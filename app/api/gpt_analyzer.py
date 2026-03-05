@@ -41,7 +41,7 @@ def analyze_materials(title: str, description: str) -> dict:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-nano",
+            model=settings.openai_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": USER_PROMPT.format(

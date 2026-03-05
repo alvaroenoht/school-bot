@@ -23,7 +23,7 @@ import logging
 
 from fastapi import APIRouter, Request
 
-from app.bot import admin_commands, qa_handler, registration
+from app.bot import admin_commands, qa_handler, registration, intent_agent
 from app.bot import known_contact, fundraiser_admin, payment_flow
 from app.config import get_settings
 from app.db.database import SessionLocal
@@ -57,7 +57,15 @@ async def whatsapp_webhook(request: Request):
     body = await request.json()
     settings = get_settings()
 
-    logger.info(f"WEBHOOK BODY: {body}")
+    logger.info(
+        "WEBHOOK event=%s from=%s to=%s type=%s hasMedia=%s bodyLen=%s",
+        body.get("event"),
+        body.get("payload", {}).get("participant") or body.get("payload", {}).get("from"),
+        body.get("payload", {}).get("to"),
+        body.get("payload", {}).get("type"),
+        body.get("payload", {}).get("hasMedia"),
+        len(body.get("payload", {}).get("body") or ""),
+    )
 
     if body.get("event") != "message":
         logger.info(f"IGNORED EVENT: {body.get('event')}")
@@ -77,7 +85,7 @@ async def whatsapp_webhook(request: Request):
 
     wa = WahaClient()
     from_phone = wa.resolve_phone(raw_jid)
-    logger.info(f"Resolved sender: {raw_jid} \u2192 {from_phone}")
+    logger.info("ROUTE from=%s phone=%s group=%s", raw_jid, from_phone, _is_group(chat_id))
 
     db = SessionLocal()
     try:
@@ -117,7 +125,7 @@ async def whatsapp_webhook(request: Request):
                 if student else None
             )
             if parent:
-                await qa_handler.handle(raw_jid, chat_id, clean_text, db, parent)
+                await intent_agent.handle(raw_jid, chat_id, clean_text, db, parent)
             return {"status": "ok"}
 
         # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
@@ -172,7 +180,12 @@ async def whatsapp_webhook(request: Request):
             if _is_pay_command(raw_text):
                 await payment_flow.start_from_command(raw_jid, chat_id, raw_text, db, parent)
             else:
-                await qa_handler.handle(raw_jid, chat_id, raw_text, db, parent)
+                await intent_agent.handle(
+                    raw_jid, chat_id, raw_text, db, parent,
+                    is_admin=(from_phone == settings.admin_phone),
+                    has_media=has_media, media_type=media_type,
+                    message_id=message_id, payload=payload,
+                )
             return {"status": "ok"}
 
         # 5. Known contact \u2014 "pay/pagar" or brief help
@@ -181,10 +194,10 @@ async def whatsapp_webhook(request: Request):
             if _is_pay_command(raw_text):
                 await payment_flow.start_from_command(raw_jid, chat_id, raw_text, db, contact)
             else:
-                wa.send_text(
-                    chat_id,
-                    f"Hola *{contact.name}*! Puedes usar:\n"
-                    "  \u2022 `/pagar <nombre>` \u2014 pagar una actividad escolar",
+                await intent_agent.handle(
+                    raw_jid, chat_id, raw_text, db, contact,
+                    has_media=has_media, media_type=media_type,
+                    message_id=message_id, payload=payload,
                 )
             return {"status": "ok"}
 
