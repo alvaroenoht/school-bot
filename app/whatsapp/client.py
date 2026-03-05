@@ -11,7 +11,6 @@ import requests
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-WA_MAX_LENGTH = 4000
 
 
 class WahaClient:
@@ -155,22 +154,3 @@ class WahaClient:
         except requests.RequestException as e:
             logger.error(f"WA send_image failed to {chat_id}: {e}")
             return {}
-    def send_chunked(self, chat_id: str, text: str) -> None:
-        if len(text) <= WA_MAX_LENGTH:
-            self.send_text(chat_id, text)
-            return
-        chunks: list[str] = []
-        current = ""
-        for line in text.split("\n"):
-            if len(current) + len(line) + 1 <= WA_MAX_LENGTH:
-                current += line + "\n"
-            else:
-                chunks.append(current)
-                current = line + "\n"
-        if current:
-            chunks.append(current)
-        for i, chunk in enumerate(chunks, 1):
-            if len(chunks) > 1:
-                chunk = f"*Parte {i}/{len(chunks)}*\n{chunk}"
-            self.send_text(chat_id, chunk)
-            time.sleep(0.5)

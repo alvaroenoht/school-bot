@@ -54,7 +54,7 @@ async def send_weekly_summaries():
                 raw_conn = db.connection()
                 message = generate_weekly_summary(raw_conn, student_id, start, end)
                 if message:
-                    wa.send_chunked(classroom.whatsapp_group_id, message)
+                    wa.send_text(classroom.whatsapp_group_id, message)
                 else:
                     logger.warning(f"No assignments for student {student_id} in week {start}–{end}")
                     continue

@@ -82,7 +82,7 @@ async def handle(phone: str, chat_id: str, text: str, db: Session, parent: model
         for sid in student_ids:
             msg = generate_weekly_summary(raw_conn, sid, start, end)
             if msg:
-                wa.send_chunked(chat_id, msg)
+                wa.send_text(chat_id, msg)
 
     else:
         wa.send_text(

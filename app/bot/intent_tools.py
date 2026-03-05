@@ -159,7 +159,7 @@ async def query_assignments_week(args, *, chat_id, db, sender, **kw) -> str | No
     for sid in student_ids:
         msg = generate_weekly_summary(raw_conn, sid, start, end)
         if msg:
-            wa.send_chunked(chat_id, msg)
+            wa.send_text(chat_id, msg)
             sent = True
 
     logger.info(f"INTENT_TOOLS query_assignments_week start={start}")
@@ -167,7 +167,7 @@ async def query_assignments_week(args, *, chat_id, db, sender, **kw) -> str | No
     if not sent:
         return f"No hay actividades registradas para la semana del {start.strftime('%d/%m')}."
 
-    # Weekly summary already sent via send_chunked, no need for LLM follow-up
+    # Weekly summary already sent directly, no need for LLM follow-up
     return None
 
 
