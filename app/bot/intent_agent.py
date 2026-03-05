@@ -13,6 +13,7 @@ Falls back to qa_handler on any LLM error.
 """
 import json
 import logging
+from datetime import datetime
 
 import openai
 from sqlalchemy.orm import Session
@@ -34,9 +35,9 @@ TOOLS = [
             "name": "query_assignments_day",
             "description": (
                 "Consulta las actividades/tareas escolares para un día específico. "
-                "Usa offset_days=0 para hoy, 1 para mañana, 2 para pasado mañana, etc. "
-                "Para un día de la semana usa weekday: 0=lunes, 1=martes, 2=miércoles, "
-                "3=jueves, 4=viernes."
+                "Usa offset_days SOLO para 'hoy' (0) o 'mañana' (1). "
+                "Para cualquier día de la semana por nombre (lunes, martes, etc.) "
+                "usa weekday: 0=lunes, 1=martes, 2=miércoles, 3=jueves, 4=viernes."
             ),
             "parameters": {
                 "type": "object",
@@ -143,10 +144,14 @@ TOOLS = [
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
+_DAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
 _SYSTEM_TEMPLATE = """\
 Eres el asistente escolar de WhatsApp del colegio La Salle. \
 Hablas español panameño informal y amigable — como un chat real. \
 Usa emojis con moderación (1-2 por mensaje).
+
+Hoy es {today_weekday} {today_date}.
 
 Tu rol:
 - Ayudar a padres con consultas sobre tareas y actividades escolares
@@ -173,9 +178,13 @@ Reglas estrictas:
 
 def _build_system_prompt(sender, is_admin: bool, db: Session) -> str:
     """Build system prompt with sender context and active fundraisers."""
+    from app.bot.qa_handler import PANAMA_TZ
+    today = datetime.now(PANAMA_TZ).date()
     sender_ctx = _build_sender_context(sender, is_admin, db)
     fundraiser_ctx = _build_fundraiser_context(db)
     return _SYSTEM_TEMPLATE.format(
+        today_weekday=_DAY_NAMES[today.weekday()],
+        today_date=today.strftime("%d/%m/%Y"),
         sender_context=sender_ctx,
         fundraiser_context=fundraiser_ctx,
     )
