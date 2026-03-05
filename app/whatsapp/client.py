@@ -94,6 +94,27 @@ class WahaClient:
             logger.error(f"download_media failed for {message_id}: {e}")
             return None
 
+    def download_media_url(self, media_url: str) -> bytes | None:
+        """Download media directly from a WAHA media URL (payload.media.url).
+
+        WAHA serves media files at /api/files/<filename>. The URL in the
+        webhook payload may reference localhost or the container hostname,
+        so we extract just the path and prepend our configured base_url.
+        """
+        from urllib.parse import urlparse
+        try:
+            path = urlparse(media_url).path
+            url = f"{self.base_url}{path}"
+            logger.debug(f"download_media_url: {url}")
+            r = requests.get(url, headers=self.headers, timeout=30)
+            if r.status_code == 200:
+                return r.content
+            logger.warning(f"download_media_url got {r.status_code} for {url}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"download_media_url failed for {media_url}: {e}")
+            return None
+
     def get_group_participants(self, group_id: str) -> list[str]:
         """Get participant JIDs for a WhatsApp group."""
         url = f"{self.base_url}/api/{self.session}/groups"

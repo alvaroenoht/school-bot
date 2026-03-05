@@ -356,8 +356,13 @@ async def _process_receipt_image(
     message_id = payload.get("id", "")
     wa.send_text(chat_id, "\U0001f50d Analizando comprobante...")
 
-    # Download image
-    image_bytes = wa.download_media(message_id)
+    # Download image — prefer media.url from WAHA payload (direct file URL),
+    # fall back to message-ID-based download if not available.
+    media_url = (payload.get("media") or {}).get("url", "")
+    if media_url:
+        image_bytes = wa.download_media_url(media_url)
+    else:
+        image_bytes = wa.download_media(message_id)
     if not image_bytes:
         _advance(session, "awaiting_manual_amount", data, db)
         wa.send_text(
