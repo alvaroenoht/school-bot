@@ -216,8 +216,6 @@ async def explain_assignment(args, *, db, sender, **kw) -> str:
         lines.append(f"Tipo: {a.type}")
         if a.description:
             desc_text = _strip_html(a.description)
-            if len(desc_text) > 800:
-                desc_text = desc_text[:800] + "..."
             lines.append(f"Descripción completa: {desc_text}")
         if a.summary:
             lines.append(f"Resumen: {a.summary}")

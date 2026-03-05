@@ -67,8 +67,10 @@ TOOLS = [
             "name": "explain_assignment",
             "description": (
                 "Busca una tarea o actividad específica por palabra clave "
-                "(materia, tema, título). Devuelve la descripción completa, "
-                "resumen y materiales necesarios. "
+                "(materia, tema, título). Incluye formativas Y sumativas. "
+                "Devuelve la descripción COMPLETA del portal Seduca, "
+                "resumen y materiales. Usa esta herramienta para profundizar "
+                "en cualquier actividad cuando el padre quiera más detalle. "
                 "NO generes respuestas a las tareas — solo explica qué hay que hacer."
             ),
             "parameters": {
