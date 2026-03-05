@@ -2,16 +2,13 @@
 Summary and reminder senders — called by APScheduler jobs.
 """
 import logging
-import os
 from datetime import datetime, timedelta
 
 import pytz
-from sqlalchemy import text
 
 from app.db.database import SessionLocal
 from app.db import models
-from app.utils.pdf_generator import create_weekly_pdf
-from app.utils.summary_formatter import generate_weekly_data, generate_weekly_summary
+from app.utils.summary_formatter import generate_weekly_summary
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -51,27 +48,12 @@ async def send_weekly_summaries():
 
             for student_id in [student.id]:
                 # Text summary
-                raw_conn = db.connection()
+                raw_conn = db.connection().connection.dbapi_connection
                 message = generate_weekly_summary(raw_conn, student_id, start, end)
                 if message:
                     wa.send_text(classroom.whatsapp_group_id, message)
                 else:
                     logger.warning(f"No assignments for student {student_id} in week {start}–{end}")
-                    continue
-
-                # PDF
-                pdf_data = generate_weekly_data(raw_conn, student_id, start, end)
-                pdf_path = f"/tmp/student_{student_id}_week_{start}.pdf"
-                try:
-                    create_weekly_pdf(pdf_data, pdf_path, week_dates)
-                    wa.send_document(
-                        classroom.whatsapp_group_id,
-                        pdf_path,
-                        caption=f"📄 Actividades del {week_dates[0].day} al {week_dates[-1].day}",
-                    )
-                finally:
-                    if os.path.exists(pdf_path):
-                        os.remove(pdf_path)
 
     finally:
         db.close()
