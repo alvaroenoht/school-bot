@@ -82,13 +82,6 @@ async def whatsapp_webhook(request: Request):
     has_media: bool = payload.get("hasMedia", False)
     media_type: str = payload.get("type") or payload.get("_data", {}).get("type") or ""
 
-    # Debug: log available keys when media is present but type is missing
-    if has_media and not payload.get("type"):
-        logger.info("MEDIA_DEBUG keys=%s _data_keys=%s media_type=%s",
-                     [k for k in payload.keys()],
-                     [k for k in payload.get("_data", {}).keys()][:10],
-                     media_type)
-
     # raw_jid = sender's WhatsApp JID (participant in groups, "from" in DMs)
     raw_jid: str = payload.get("participant") if _is_group(chat_id) else chat_id
     if not raw_jid:
@@ -163,8 +156,6 @@ async def whatsapp_webhook(request: Request):
             db.query(models.ConversationSession).filter_by(chat_jid=raw_jid).first()
         )
         if conv_session:
-            logger.info("CONV_SESSION flow=%s step=%s jid=%s media=%s type=%s",
-                        conv_session.flow, conv_session.step, raw_jid, has_media, media_type)
             if conv_session.flow == "known_contact":
                 await known_contact.handle(raw_jid, chat_id, raw_text, db, conv_session)
             elif conv_session.flow == "fundraiser_create":

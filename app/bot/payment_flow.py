@@ -122,7 +122,8 @@ async def handle(
     step = session.step
     text = (text or "").strip()
     has_media = (payload or {}).get("hasMedia", False)
-    media_type = (payload or {}).get("type", "")
+    _p = payload or {}
+    media_type = _p.get("type") or _p.get("_data", {}).get("type") or ""
 
     # ── awaiting_child ────────────────────────────────────────────────────
     if step == "awaiting_child":
