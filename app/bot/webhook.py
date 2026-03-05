@@ -60,6 +60,15 @@ def _is_mentioned(payload: dict, bot_phone: str) -> bool:
             if phone == bot_phone:
                 return True
 
+    # 4. Quoted (replied-to) a bot message
+    quoted = (
+        payload.get("_data", {}).get("quotedMsg")
+        or payload.get("quotedMsg")
+        or {}
+    )
+    if quoted and (quoted.get("self") == "in" or quoted.get("fromMe")):
+        return True
+
     return False
 
 
@@ -127,11 +136,14 @@ async def whatsapp_webhook(request: Request):
                 _handle_vincular(raw_jid, chat_id, raw_text.lstrip("/"), db, wa)
                 return {"status": "ok"}
 
-            # All other group messages require @mention
+            # All other group messages require @mention or quoting a bot message
+            _data = payload.get("_data", {})
+            quoted = _data.get("quotedMsg")
             logger.info(
-                "GROUP_DEBUG bot_phone=%s mentionedIds=%s body=%s",
+                "GROUP_DEBUG bot_phone=%s mentionedIds=%s quoted_keys=%s body=%s",
                 settings.waha_bot_phone,
                 payload.get("mentionedIds"),
+                list(quoted.keys())[:8] if isinstance(quoted, dict) else quoted,
                 raw_text[:80],
             )
             if not _is_mentioned(payload, settings.waha_bot_phone):
