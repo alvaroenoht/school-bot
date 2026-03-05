@@ -13,6 +13,7 @@ Falls back to qa_handler on any LLM error.
 """
 import json
 import logging
+import time
 from datetime import datetime
 
 import openai
@@ -25,6 +26,33 @@ from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
 wa = WahaClient()
+
+# ── Conversation memory (in-process, TTL-based) ──────────────────────────────
+# {chat_id: [(timestamp, role, content), ...]}
+_chat_history: dict[str, list[tuple[float, str, str]]] = {}
+_HISTORY_TTL = 30 * 60      # 30 minutes
+_HISTORY_MAX_MSGS = 10       # keep last N exchanges
+
+
+def _get_history(chat_id: str) -> list[dict]:
+    """Return recent messages for this chat as OpenAI message dicts."""
+    entries = _chat_history.get(chat_id, [])
+    if not entries:
+        return []
+    # Prune expired
+    cutoff = time.time() - _HISTORY_TTL
+    entries = [(ts, role, content) for ts, role, content in entries if ts > cutoff]
+    _chat_history[chat_id] = entries
+    return [{"role": role, "content": content} for _, role, content in entries]
+
+
+def _append_history(chat_id: str, role: str, content: str):
+    """Add a message to the chat history."""
+    entries = _chat_history.setdefault(chat_id, [])
+    entries.append((time.time(), role, content))
+    # Trim to max
+    if len(entries) > _HISTORY_MAX_MSGS:
+        _chat_history[chat_id] = entries[-_HISTORY_MAX_MSGS:]
 
 # ── OpenAI function-calling tool schemas ───────────────────────────────────────
 
@@ -267,13 +295,15 @@ async def handle(
 
     system_prompt = _build_system_prompt(sender, is_admin, db)
 
+    # Save user message to history
+    _append_history(chat_id, "user", user_content)
+
     try:
         client = openai.OpenAI(api_key=settings.openai_api_key)
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ]
+        # Build messages: system + recent history (already includes current msg)
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(_get_history(chat_id))
 
         response = client.chat.completions.create(
             model=settings.openai_model,
@@ -335,9 +365,11 @@ async def handle(
 
                 reply = followup.choices[0].message.content
                 if reply:
+                    _append_history(chat_id, "assistant", reply)
                     wa.send_text(chat_id, reply)
                 else:
                     # LLM returned empty — send the raw data as fallback
+                    _append_history(chat_id, "assistant", result)
                     wa.send_text(chat_id, result)
             # else: tool already sent WA message (payment flows, etc.)
             return
@@ -345,6 +377,7 @@ async def handle(
         # ── Plain text response ───────────────────────────────────────────
         if message.content:
             logger.info("INTENT route=llm_text jid=%s", raw_jid)
+            _append_history(chat_id, "assistant", message.content)
             wa.send_text(chat_id, message.content)
             return
 
