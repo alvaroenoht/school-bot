@@ -39,12 +39,34 @@ def _is_group(chat_id: str) -> bool:
 
 
 def _is_mentioned(payload: dict, bot_phone: str) -> bool:
+    # 1. Standard mentionedIds field
     mentions = payload.get("mentionedIds") or []
-    return any(bot_phone in str(m) for m in mentions)
+    if any(bot_phone in str(m) for m in mentions):
+        return True
+
+    # 2. WAHA _data.mentionedJidList (webjs engine)
+    jid_list = payload.get("_data", {}).get("mentionedJidList") or []
+    if any(bot_phone in str(j) for j in jid_list):
+        return True
+
+    # 3. Fallback: body contains @<lid_number> — resolve to phone
+    import re
+    body = payload.get("body") or ""
+    at_ids = re.findall(r"@(\d{10,})", body)
+    if at_ids:
+        wa = WahaClient()
+        for lid_num in at_ids:
+            phone = wa.resolve_phone(f"{lid_num}@lid")
+            if phone == bot_phone:
+                return True
+
+    return False
 
 
 def _strip_mention(text: str, bot_phone: str) -> str:
-    return text.replace(f"@{bot_phone}", "").strip()
+    import re
+    # Remove @<digits> mentions (handles both @phone and @lid formats)
+    return re.sub(r"@\d{10,}", "", text).strip()
 
 
 def _is_pay_command(text: str) -> bool:
