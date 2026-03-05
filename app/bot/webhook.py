@@ -60,14 +60,14 @@ def _is_mentioned(payload: dict, bot_phone: str) -> bool:
             if phone == bot_phone:
                 return True
 
-    # 4. Quoted (replied-to) a bot message
-    quoted = (
-        payload.get("_data", {}).get("quotedMsg")
-        or payload.get("quotedMsg")
-        or {}
-    )
-    if quoted and (quoted.get("self") == "in" or quoted.get("fromMe")):
-        return True
+    # 4. Quoted (replied-to) a bot message — check quotedParticipant
+    _data = payload.get("_data", {})
+    quoted_participant = _data.get("quotedParticipant") or ""
+    if quoted_participant:
+        wa = WahaClient()
+        quoted_phone = wa.resolve_phone(quoted_participant)
+        if quoted_phone == bot_phone:
+            return True
 
     return False
 
