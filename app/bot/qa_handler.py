@@ -78,8 +78,7 @@ async def handle(phone: str, chat_id: str, text: str, db: Session, parent: model
     elif intent == "week":
         start = _next_weekday(today, 0)   # next Monday
         end = start + timedelta(days=4)
-        from app.db.database import SessionLocal
-        raw_conn = db.connection()
+        raw_conn = db.connection().connection.dbapi_connection
         for sid in student_ids:
             msg = generate_weekly_summary(raw_conn, sid, start, end)
             if msg:

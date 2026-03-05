@@ -112,7 +112,7 @@ async def query_assignments_week(args, *, chat_id, db, sender, **kw):
 
     start = _next_weekday(today, 0)  # next Monday
     end = start + timedelta(days=4)
-    raw_conn = db.connection()
+    raw_conn = db.connection().connection.dbapi_connection
     sent = False
     for sid in student_ids:
         msg = generate_weekly_summary(raw_conn, sid, start, end)

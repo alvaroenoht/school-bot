@@ -28,7 +28,7 @@ def translate_date(date_obj):
 def generate_weekly_summary(conn, student_id, start, end):
     cursor = conn.cursor()
     # Get student's name
-    cursor.execute("SELECT grade FROM students WHERE id = ?", (student_id,))
+    cursor.execute("SELECT grade FROM students WHERE id = %s", (student_id,))
     row = cursor.fetchone()
     student_name = row[0] if row else "Grado"
 
@@ -47,7 +47,7 @@ def generate_weekly_summary(conn, student_id, start, end):
     cursor.execute('''
         SELECT title, subject_id, type, date, created_at, materials, summary, short_url
         FROM assignments
-        WHERE student_id = ? AND date BETWEEN ? AND ?
+        WHERE student_id = %s AND date BETWEEN %s AND %s
         ORDER BY date
     ''', (student_id, start.isoformat(), end.isoformat()))
 
@@ -101,7 +101,7 @@ def generate_weekly_data(conn, student_id, start, end):
     cursor.execute('''
         SELECT title, subject_id, type, date, materials, summary
         FROM assignments
-        WHERE student_id = ? AND date BETWEEN ? AND ?
+        WHERE student_id = %s AND date BETWEEN %s AND %s
         ORDER BY date
     ''', (student_id, start.isoformat(), end.isoformat()))
 
