@@ -81,10 +81,10 @@ async def dispatch(
 
 # ── Info tools (return data for LLM) ─────────────────────────────────────────
 
-async def query_assignments_day(args, *, db, sender, **kw) -> str:
+async def query_assignments_day(args, *, chat_id, db, sender, **kw) -> str:
     """Fetch assignments for a specific day and return as structured text."""
     today = datetime.now(PANAMA_TZ).date()
-    student_ids = _get_student_ids(sender, db)
+    student_ids = _get_student_ids(sender, db, chat_id)
     if not student_ids:
         return "El usuario no tiene estudiantes vinculados."
 
@@ -148,36 +148,36 @@ async def query_assignments_day(args, *, db, sender, **kw) -> str:
 async def query_assignments_week(args, *, chat_id, db, sender, **kw) -> str | None:
     """Send full weekly summary. Uses existing formatter which sends directly."""
     today = datetime.now(PANAMA_TZ).date()
-    student_ids = _get_student_ids(sender, db)
+    student_ids = _get_student_ids(sender, db, chat_id)
     if not student_ids:
         return "El usuario no tiene estudiantes vinculados."
 
     start = _next_weekday(today, 0)  # next Monday
     end = start + timedelta(days=4)
     raw_conn = db.connection().connection.dbapi_connection
-    sent = False
+    parts = []
     for sid in student_ids:
         msg = generate_weekly_summary(raw_conn, sid, start, end)
         if msg:
-            wa.send_text(chat_id, msg)
-            sent = True
+            parts.append(msg)
 
     logger.info(f"INTENT_TOOLS query_assignments_week start={start}")
 
-    if not sent:
+    if not parts:
         return f"No hay actividades registradas para la semana del {start.strftime('%d/%m')}."
 
-    # Weekly summary already sent directly, no need for LLM follow-up
+    # Send all students in one message
+    wa.send_text(chat_id, "\n\n".join(parts))
     return None
 
 
-async def explain_assignment(args, *, db, sender, **kw) -> str:
+async def explain_assignment(args, *, chat_id, db, sender, **kw) -> str:
     """Search assignment by keyword, return full details including description."""
     search_term = args.get("search_term", "").strip()
     if not search_term:
         return "El usuario no especificó qué tarea buscar."
 
-    student_ids = _get_student_ids(sender, db)
+    student_ids = _get_student_ids(sender, db, chat_id)
     if not student_ids:
         return "El usuario no tiene estudiantes vinculados."
 
@@ -311,12 +311,28 @@ async def start_receipt_flow(args, *, raw_jid, chat_id, db, sender, **kw) -> Non
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _get_student_ids(sender, db: Session) -> list[int]:
-    """Extract student IDs from Parent or KnownContact."""
-    if isinstance(sender, models.Parent):
-        return sender.student_ids or []
-    # KnownContact — no student IDs available
-    return []
+def _get_student_ids(sender, db: Session, chat_id: str = "") -> list[int]:
+    """Extract student IDs from Parent, scoped to the group's classroom if in a group."""
+    if not isinstance(sender, models.Parent):
+        return []
+    all_ids = sender.student_ids or []
+    if not all_ids:
+        return []
+    # If chat_id is a group, scope to the classroom linked to that group
+    if chat_id and "@g.us" in chat_id:
+        classroom = (
+            db.query(models.Classroom)
+            .filter_by(whatsapp_group_id=chat_id, is_active=True)
+            .first()
+        )
+        if classroom:
+            scoped = [
+                s.id for s in db.query(models.Student)
+                .filter(models.Student.id.in_(all_ids), models.Student.classroom_id == classroom.id)
+                .all()
+            ]
+            return scoped if scoped else all_ids
+    return all_ids
 
 
 # ── Tool registry ─────────────────────────────────────────────────────────────
