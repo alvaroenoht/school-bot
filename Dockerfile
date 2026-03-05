@@ -19,7 +19,7 @@ COPY app/ ./app/
 RUN mkdir -p /tmp/reports
 
 # Non-root user for security
-RUN useradd -m -u 1000 schoolbot && chown -R schoolbot:schoolbot /app
+RUN useradd -m -u 1000 schoolbot && chown -R schoolbot:schoolbot /app /tmp/reports
 USER schoolbot
 
 EXPOSE 8000
