@@ -163,6 +163,8 @@ async def whatsapp_webhook(request: Request):
             db.query(models.ConversationSession).filter_by(chat_jid=raw_jid).first()
         )
         if conv_session:
+            logger.info("CONV_SESSION flow=%s step=%s jid=%s media=%s type=%s",
+                        conv_session.flow, conv_session.step, raw_jid, has_media, media_type)
             if conv_session.flow == "known_contact":
                 await known_contact.handle(raw_jid, chat_id, raw_text, db, conv_session)
             elif conv_session.flow == "fundraiser_create":
