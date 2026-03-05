@@ -16,6 +16,53 @@ from app.utils.helpers import shorten_url
 
 logger = logging.getLogger(__name__)
 
+# ── Subject emoji auto-picker ─────────────────────────────────────────────────
+
+_EMOJI_RULES: list[tuple[list[str], str]] = [
+    (["matemática", "math", "álgebra", "geometría", "cálculo"],       "🔢"),
+    (["ciencia", "science", "biología", "química", "física", "naturales"], "🔬"),
+    (["español", "lengua", "lectura", "literatura", "redacción"],     "📝"),
+    (["inglés", "english", "idioma"],                                  "🗣️"),
+    (["historia", "history", "social", "sociales", "cívica"],         "📜"),
+    (["geografía", "geography"],                                       "🌎"),
+    (["educación física", "deporte", "physical", "gimnasia"],         "⚽"),
+    (["arte", "art", "dibujo", "plástica"],                           "🎨"),
+    (["música", "music", "canto", "instrumento"],                     "🎵"),
+    (["religión", "religion", "ética", "moral", "valores"],           "⛪"),
+    (["tecnología", "informática", "computación", "robótica"],        "💻"),
+    (["francés", "french", "alemán", "german", "mandarín"],           "🌐"),
+    (["orientación", "tutoría", "consejería"],                        "🧭"),
+]
+
+
+def _pick_emoji(subject_name: str) -> str:
+    """Pick an emoji based on the subject name using keyword matching."""
+    lower = subject_name.lower()
+    for keywords, emoji in _EMOJI_RULES:
+        if any(kw in lower for kw in keywords):
+            return emoji
+    return "📘"  # default
+
+
+def _ensure_subject(materia_id: int, materia_name: str, db) -> None:
+    """Create a Subject row if this materia_id doesn't exist yet."""
+    existing = db.query(models.Subject).filter_by(materia_id=materia_id).first()
+    if existing:
+        # Update name if it changed (rare but possible)
+        if existing.name != materia_name:
+            existing.name = materia_name
+            existing.icon = _pick_emoji(materia_name)
+            logger.info(f"  Updated subject {materia_id}: {materia_name}")
+        return
+
+    icon = _pick_emoji(materia_name)
+    db.add(models.Subject(
+        materia_id=materia_id,
+        name=materia_name,
+        icon=icon,
+    ))
+    logger.info(f"  New subject {materia_id}: {materia_name} {icon}")
+
 
 async def run_sync(classroom_id: int | None = None):
     """
@@ -97,6 +144,11 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db):
     created_at  = item["asigCreado"]
     type_       = item["asigTipo"]
     subject_id  = int(item["asigMateriaId"])
+
+    # Auto-populate subjects table from Seduca data
+    materia_name = (item.get("asigMateriaNombre") or "").strip()
+    if materia_name:
+        _ensure_subject(subject_id, materia_name, db)
 
     existing = db.query(models.Assignment).filter_by(
         id=asig_id, student_id=student_id
