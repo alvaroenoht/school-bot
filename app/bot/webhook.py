@@ -138,12 +138,13 @@ async def whatsapp_webhook(request: Request):
 
             # All other group messages require @mention or quoting a bot message
             _data = payload.get("_data", {})
-            quoted = _data.get("quotedMsg")
+            quoted_fields = {k: v for k, v in _data.items() if "quot" in k.lower()}
             logger.info(
-                "GROUP_DEBUG bot_phone=%s mentionedIds=%s quoted_keys=%s body=%s",
+                "GROUP_DEBUG bot_phone=%s mentionedIds=%s quoted=%s body=%s",
                 settings.waha_bot_phone,
                 payload.get("mentionedIds"),
-                list(quoted.keys())[:8] if isinstance(quoted, dict) else quoted,
+                {k: (str(v)[:60] if not isinstance(v, (bool, int, type(None))) else v)
+                 for k, v in quoted_fields.items()} if quoted_fields else None,
                 raw_text[:80],
             )
             if not _is_mentioned(payload, settings.waha_bot_phone):
