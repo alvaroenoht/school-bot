@@ -325,43 +325,53 @@ async def handle(
 
         # ── Tool calls ────────────────────────────────────────────────────
         if message.tool_calls:
-            tool_call = message.tool_calls[0]  # handle first tool call
-            fn_name = tool_call.function.name
-            fn_args = json.loads(tool_call.function.arguments)
+            # Dispatch ALL tool calls (LLM may request multiple)
+            has_data = False
+            tool_results: list[tuple[str, str, str | None]] = []  # (call_id, fn_name, result)
 
-            logger.info(
-                "INTENT route=llm jid=%s intent=%s args=%s",
-                raw_jid, fn_name, fn_args,
-            )
+            for tool_call in message.tool_calls:
+                fn_name = tool_call.function.name
+                fn_args = json.loads(tool_call.function.arguments)
 
-            # Permission check
-            if intent_tools.is_admin_only(fn_name) and not is_admin:
-                wa.send_text(chat_id, "Ese comando es solo para administradores. 🔒")
-                return
+                logger.info(
+                    "INTENT route=llm jid=%s intent=%s args=%s",
+                    raw_jid, fn_name, fn_args,
+                )
 
-            result = await intent_tools.dispatch(
-                fn_name,
-                fn_args,
-                raw_jid=raw_jid,
-                chat_id=chat_id,
-                text=text,
-                db=db,
-                sender=sender,
-                is_admin=is_admin,
-                message_id=message_id,
-                payload=payload,
-            )
+                # Permission check
+                if intent_tools.is_admin_only(fn_name) and not is_admin:
+                    tool_results.append((tool_call.id, fn_name, "Comando solo para administradores."))
+                    continue
 
-            # If tool returned data, feed it back to the LLM for a natural response
-            if result is not None:
-                logger.info("INTENT route=llm_multiturn jid=%s tool=%s", raw_jid, fn_name)
+                result = await intent_tools.dispatch(
+                    fn_name,
+                    fn_args,
+                    raw_jid=raw_jid,
+                    chat_id=chat_id,
+                    text=text,
+                    db=db,
+                    sender=sender,
+                    is_admin=is_admin,
+                    message_id=message_id,
+                    payload=payload,
+                )
+                tool_results.append((tool_call.id, fn_name, result))
+                if result is not None:
+                    has_data = True
+
+            # If any tool returned data, feed ALL results back to the LLM
+            if has_data:
+                first_fn = tool_results[0][1]
+                logger.info("INTENT route=llm_multiturn jid=%s tools=%d first=%s",
+                            raw_jid, len(tool_results), first_fn)
 
                 messages.append(message.model_dump())
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result,
-                })
+                for call_id, fn_name, result in tool_results:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": result or _TOOL_HISTORY_NOTE.get(fn_name, f"[{fn_name} ejecutado]"),
+                    })
 
                 followup = client.chat.completions.create(
                     model=settings.openai_model,
@@ -375,16 +385,14 @@ async def handle(
                     _append_history(chat_id, "assistant", reply)
                     wa.send_text(chat_id, reply)
                 else:
-                    # LLM returned empty — send the raw data as fallback
-                    _append_history(chat_id, "assistant", result)
-                    wa.send_text(chat_id, result)
+                    combined = "\n\n".join(r for _, _, r in tool_results if r)
+                    _append_history(chat_id, "assistant", combined)
+                    wa.send_text(chat_id, combined)
             else:
-                # Tool already sent WA message directly — save a note to history
-                # so the LLM knows what it already answered
-                _append_history(
-                    chat_id, "assistant",
-                    _TOOL_HISTORY_NOTE.get(fn_name, f"[Se ejecutó {fn_name}]"),
-                )
+                # All tools sent WA messages directly — save a note to history
+                notes = [_TOOL_HISTORY_NOTE.get(fn, f"[Se ejecutó {fn}]")
+                         for _, fn, _ in tool_results]
+                _append_history(chat_id, "assistant", " ".join(notes))
             return
 
         # ── Plain text response ───────────────────────────────────────────
