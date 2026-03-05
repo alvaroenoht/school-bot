@@ -72,6 +72,10 @@ async def whatsapp_webhook(request: Request):
         return {"status": "ignored"}
 
     payload = body.get("payload", {})
+
+    # Ignore messages sent by the bot itself (prevents echo loops)
+    if payload.get("fromMe", False):
+        return {"status": "ignored"}
     chat_id: str = payload.get("from", "")
     raw_text: str = (payload.get("body") or "").strip()
     message_id: str = payload.get("id", "")

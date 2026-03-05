@@ -8,6 +8,7 @@ Called by the webhook ONLY when no deterministic route matched:
   - Group @mention that isn't a vincular command
 
 Uses OpenAI function-calling to determine intent and call tool wrappers.
+Multi-turn: info tools return data → LLM formulates a natural response.
 Falls back to qa_handler on any LLM error.
 """
 import json
@@ -66,8 +67,9 @@ TOOLS = [
             "name": "explain_assignment",
             "description": (
                 "Busca una tarea o actividad específica por palabra clave "
-                "(materia, tema, título). Muestra el resumen y materiales necesarios. "
-                "NO genera respuestas a las tareas."
+                "(materia, tema, título). Devuelve la descripción completa, "
+                "resumen y materiales necesarios. "
+                "NO generes respuestas a las tareas — solo explica qué hay que hacer."
             ),
             "parameters": {
                 "type": "object",
@@ -156,6 +158,7 @@ Reglas estrictas:
 - NUNCA des respuestas a tareas escolares ni ayudes a hacer trampa
 - Si te piden ayuda con una tarea, explica los pasos o conceptos pero no des la respuesta final
 - Al sugerir acciones, ofrece opciones claras: "hoy, mañana, semana, pagar"
+- Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
 
 {sender_context}
 
@@ -229,8 +232,9 @@ async def handle(
 
     1. Build context + system prompt
     2. Call OpenAI with function-calling tools
-    3. Dispatch tool calls OR send text reply
-    4. On error, fall back to qa_handler (parents) or brief help (contacts)
+    3. If tool returns data → feed back to LLM for natural response (multi-turn)
+    4. If tool returns None → it already sent a WA message (payment flows)
+    5. On error, fall back to qa_handler (parents) or brief help (contacts)
     """
     settings = get_settings()
 
@@ -250,12 +254,15 @@ async def handle(
 
     try:
         client = openai.OpenAI(api_key=settings.openai_api_key)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
         response = client.chat.completions.create(
             model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
+            messages=messages,
             tools=TOOLS,
             tool_choice="auto",
             temperature=0.3,
@@ -266,32 +273,58 @@ async def handle(
 
         # ── Tool calls ────────────────────────────────────────────────────
         if message.tool_calls:
-            for tool_call in message.tool_calls:
-                fn_name = tool_call.function.name
-                fn_args = json.loads(tool_call.function.arguments)
+            tool_call = message.tool_calls[0]  # handle first tool call
+            fn_name = tool_call.function.name
+            fn_args = json.loads(tool_call.function.arguments)
 
-                logger.info(
-                    "INTENT route=llm jid=%s intent=%s args=%s",
-                    raw_jid, fn_name, fn_args,
+            logger.info(
+                "INTENT route=llm jid=%s intent=%s args=%s",
+                raw_jid, fn_name, fn_args,
+            )
+
+            # Permission check
+            if intent_tools.is_admin_only(fn_name) and not is_admin:
+                wa.send_text(chat_id, "Ese comando es solo para administradores. 🔒")
+                return
+
+            result = await intent_tools.dispatch(
+                fn_name,
+                fn_args,
+                raw_jid=raw_jid,
+                chat_id=chat_id,
+                text=text,
+                db=db,
+                sender=sender,
+                is_admin=is_admin,
+                message_id=message_id,
+                payload=payload,
+            )
+
+            # If tool returned data, feed it back to the LLM for a natural response
+            if result is not None:
+                logger.info("INTENT route=llm_multiturn jid=%s tool=%s", raw_jid, fn_name)
+
+                messages.append(message.model_dump())
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result,
+                })
+
+                followup = client.chat.completions.create(
+                    model=settings.openai_model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=500,
                 )
 
-                # Permission check
-                if intent_tools.is_admin_only(fn_name) and not is_admin:
-                    wa.send_text(chat_id, "Ese comando es solo para administradores. 🔒")
-                    return
-
-                await intent_tools.dispatch(
-                    fn_name,
-                    fn_args,
-                    raw_jid=raw_jid,
-                    chat_id=chat_id,
-                    text=text,
-                    db=db,
-                    sender=sender,
-                    is_admin=is_admin,
-                    message_id=message_id,
-                    payload=payload,
-                )
+                reply = followup.choices[0].message.content
+                if reply:
+                    wa.send_text(chat_id, reply)
+                else:
+                    # LLM returned empty — send the raw data as fallback
+                    wa.send_text(chat_id, result)
+            # else: tool already sent WA message (payment flows, etc.)
             return
 
         # ── Plain text response ───────────────────────────────────────────
