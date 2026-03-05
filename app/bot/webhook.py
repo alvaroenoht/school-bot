@@ -80,7 +80,7 @@ async def whatsapp_webhook(request: Request):
     raw_text: str = (payload.get("body") or "").strip()
     message_id: str = payload.get("id", "")
     has_media: bool = payload.get("hasMedia", False)
-    media_type: str = payload.get("type", "")
+    media_type: str = payload.get("type") or payload.get("_data", {}).get("type") or ""
 
     # raw_jid = sender's WhatsApp JID (participant in groups, "from" in DMs)
     raw_jid: str = payload.get("participant") if _is_group(chat_id) else chat_id
