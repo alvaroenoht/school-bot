@@ -33,6 +33,13 @@ _chat_history: dict[str, list[tuple[float, str, str]]] = {}
 _HISTORY_TTL = 30 * 60      # 30 minutes
 _HISTORY_MAX_MSGS = 10       # keep last N exchanges
 
+# Brief notes saved to history when a tool sends messages directly (returns None)
+_TOOL_HISTORY_NOTE = {
+    "query_assignments_week": "[Ya envié el resumen semanal de actividades]",
+    "start_payment": "[Se inició el flujo de pago]",
+    "start_receipt_flow": "[Se inició el proceso de comprobante de pago]",
+}
+
 
 def _get_history(chat_id: str) -> list[dict]:
     """Return recent messages for this chat as OpenAI message dicts."""
@@ -371,7 +378,13 @@ async def handle(
                     # LLM returned empty — send the raw data as fallback
                     _append_history(chat_id, "assistant", result)
                     wa.send_text(chat_id, result)
-            # else: tool already sent WA message (payment flows, etc.)
+            else:
+                # Tool already sent WA message directly — save a note to history
+                # so the LLM knows what it already answered
+                _append_history(
+                    chat_id, "assistant",
+                    _TOOL_HISTORY_NOTE.get(fn_name, f"[Se ejecutó {fn_name}]"),
+                )
             return
 
         # ── Plain text response ───────────────────────────────────────────
