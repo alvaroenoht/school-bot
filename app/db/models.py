@@ -93,7 +93,7 @@ class Subject(Base):
     __tablename__ = "subjects"
 
     id           = Column(Integer, primary_key=True, autoincrement=True)
-    materia_id   = Column(Integer, nullable=False, index=True)
+    materia_id   = Column(Integer, nullable=False, unique=True, index=True)
     name         = Column(String, nullable=False)
     icon         = Column(String, nullable=True)
     classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)

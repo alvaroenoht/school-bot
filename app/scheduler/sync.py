@@ -18,20 +18,22 @@ logger = logging.getLogger(__name__)
 
 # ── Subject emoji auto-picker ─────────────────────────────────────────────────
 
+# More specific rules FIRST — order matters (first match wins)
 _EMOJI_RULES: list[tuple[list[str], str]] = [
+    (["sociales", "social", "cívica", "historia", "history"],         "📜"),
+    (["educación física", "deporte", "physical", "gimnasia"],         "⚽"),
+    (["fe", "religión", "religion", "ética", "moral", "valores"],     "⛪"),
+    (["familia", "fam.", "comunitar", "orientación", "tutoría", "consejería"], "👨‍👩‍👧"),
     (["matemática", "math", "álgebra", "geometría", "cálculo"],       "🔢"),
     (["ciencia", "science", "biología", "química", "física", "naturales"], "🔬"),
-    (["español", "lengua", "lectura", "literatura", "redacción"],     "📝"),
+    (["español", "lengua", "literatura", "redacción"],                "📝"),
+    (["lectura", "reading"],                                           "📖"),
     (["inglés", "english", "idioma"],                                  "🗣️"),
-    (["historia", "history", "social", "sociales", "cívica"],         "📜"),
     (["geografía", "geography"],                                       "🌎"),
-    (["educación física", "deporte", "physical", "gimnasia"],         "⚽"),
     (["arte", "art", "dibujo", "plástica"],                           "🎨"),
     (["música", "music", "canto", "instrumento"],                     "🎵"),
-    (["religión", "religion", "ética", "moral", "valores"],           "⛪"),
     (["tecnología", "informática", "computación", "robótica"],        "💻"),
     (["francés", "french", "alemán", "german", "mandarín"],           "🌐"),
-    (["orientación", "tutoría", "consejería"],                        "🧭"),
 ]
 
 
@@ -61,6 +63,7 @@ def _ensure_subject(materia_id: int, materia_name: str, db) -> None:
         name=materia_name,
         icon=icon,
     ))
+    db.flush()  # make visible to subsequent queries in the same transaction
     logger.info(f"  New subject {materia_id}: {materia_name} {icon}")
 
 
