@@ -141,6 +141,14 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
         asyncio.create_task(run_sync(classroom_id=classroom_id))
         return True
 
+    # ── resumen ────────────────────────────────────────────────────────────────
+    if cmd_lower.startswith("resumen"):
+        wa.send_text(chat_id, "📋 Enviando resumen semanal a todos los grupos...")
+        import asyncio
+        from app.scheduler.summary import send_weekly_summaries
+        asyncio.create_task(send_weekly_summaries())
+        return True
+
     return False   # not an admin command
 
 
@@ -152,7 +160,8 @@ _ADMIN_HELP = (
     "  `/disallow <id>` \u2014 desactivar un padre por ID\n\n"
     "*\U0001f504 Sincronizaci\u00f3n:*\n"
     "  `/sync` \u2014 sincronizar actividades de todos los salones\n"
-    "  `/sync <id>` \u2014 sincronizar un sal\u00f3n espec\u00edfico\n\n"
+    "  `/sync <id>` \u2014 sincronizar un sal\u00f3n espec\u00edfico\n"
+    "  `/resumen` \u2014 enviar resumen semanal a todos los grupos\n\n"
     "*\U0001f4b3 Actividades (fundraisers):*\n"
     "  `/fundraiser create <nombre>` \u2014 crear nueva actividad\n"
     "  `/fundraiser list` \u2014 listar todas las actividades\n"

@@ -20,7 +20,6 @@ def create_scheduler() -> AsyncIOScheduler:
 
     sync_h, sync_m = settings.sync_time.split(":")
     summary_h, summary_m = settings.summary_time.split(":")
-    reminder_h, reminder_m = settings.reminder_time.split(":")
 
     # ── Daily assignment sync ──────────────────────────────────────────────────
     scheduler.add_job(
@@ -31,31 +30,17 @@ def create_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # ── Weekly summary (Thursday) ──────────────────────────────────────────────
+    # ── Weekly summary (sync first, then send) ────────────────────────────────
     scheduler.add_job(
         _weekly_summary_job,
         CronTrigger(
-            day_of_week=settings.summary_day[:3],   # "thu"
+            day_of_week=settings.summary_day[:3],
             hour=int(summary_h),
             minute=int(summary_m),
             timezone=tz,
         ),
         id="weekly_summary",
-        name="Weekly summary + PDF",
-        replace_existing=True,
-    )
-
-    # ── Daily morning reminder (Mon–Fri) ───────────────────────────────────────
-    scheduler.add_job(
-        _daily_reminder_job,
-        CronTrigger(
-            day_of_week="mon-fri",
-            hour=int(reminder_h),
-            minute=int(reminder_m),
-            timezone=tz,
-        ),
-        id="daily_reminder",
-        name="Morning reminder",
+        name="Weekly summary",
         replace_existing=True,
     )
 
@@ -71,12 +56,9 @@ async def _sync_job():
 
 
 async def _weekly_summary_job():
+    from app.scheduler.sync import run_sync
     from app.scheduler.summary import send_weekly_summaries
-    logger.info("⏰ Sending weekly summaries...")
+    logger.info("⏰ Weekly summary: syncing assignments first...")
+    await run_sync()
+    logger.info("⏰ Sync done, sending weekly summaries...")
     await send_weekly_summaries()
-
-
-async def _daily_reminder_job():
-    from app.scheduler.summary import send_daily_reminders
-    logger.info("⏰ Sending daily reminders...")
-    await send_daily_reminders()
