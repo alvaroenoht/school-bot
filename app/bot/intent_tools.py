@@ -186,7 +186,7 @@ async def explain_assignment(args, *, chat_id, db, sender, **kw) -> str:
     date_start = (today - timedelta(days=7)).isoformat()
     date_end = (today + timedelta(days=14)).isoformat()
 
-    # Search in title first, then summary, then description
+    # Search in title, summary, description, then by subject name
     assignments = None
     for field in [models.Assignment.title, models.Assignment.summary, models.Assignment.description]:
         assignments = (
@@ -203,6 +203,28 @@ async def explain_assignment(args, *, chat_id, db, sender, **kw) -> str:
         )
         if assignments:
             break
+
+    # Fallback: search by subject name (e.g. "natación", "piscina" → NATACIÓN)
+    if not assignments:
+        matching_subjects = (
+            db.query(models.Subject.materia_id)
+            .filter(models.Subject.name.ilike(f"%{search_term}%"))
+            .all()
+        )
+        subject_ids = [s[0] for s in matching_subjects]
+        if subject_ids:
+            assignments = (
+                db.query(models.Assignment)
+                .filter(
+                    models.Assignment.student_id.in_(student_ids),
+                    models.Assignment.date >= date_start,
+                    models.Assignment.date <= date_end,
+                    models.Assignment.subject_id.in_(subject_ids),
+                )
+                .order_by(models.Assignment.date)
+                .limit(5)
+                .all()
+            )
 
     if not assignments:
         return f"No encontré actividades relacionadas con '{search_term}' en las próximas 2 semanas."

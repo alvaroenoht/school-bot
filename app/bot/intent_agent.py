@@ -114,7 +114,11 @@ TOOLS = [
                 "properties": {
                     "search_term": {
                         "type": "string",
-                        "description": "Palabra clave: materia (ciencias, español, inglés) o tema (nouns, lectura, etc.)",
+                        "description": (
+                            "Palabra clave para buscar. Usa el nombre FORMAL de la materia, no sinónimos coloquiales. "
+                            "Ejemplos: piscina→natación, gym→gimnasia, compu→robótica, reli→fe, sociales→ciencias sociales. "
+                            "Si no estás seguro, usa el término más formal/académico."
+                        ),
                     },
                 },
                 "required": ["search_term"],
