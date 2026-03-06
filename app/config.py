@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     openai_api_key: str
-    openai_model: str = "gpt-4.1-nano"
+    openai_model: str = "gpt-4o-mini"
 
     # ── Waha (WhatsApp gateway) ───────────────────────────────────────────────
     waha_url: str = "http://waha:3000"

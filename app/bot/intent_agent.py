@@ -149,6 +149,7 @@ Reglas estrictas:
 - Si te piden ayuda con una tarea, explica los pasos o conceptos pero no des la respuesta final
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
 - Usa herramientas SOLO para pagos y comprobantes
+- NUNCA termines tu respuesta con una pregunta — responde de forma concisa y directa, sin preguntar "¿necesitas algo más?" ni similares
 
 {sender_context}
 
