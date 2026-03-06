@@ -143,10 +143,40 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
 
     # ── resumen ────────────────────────────────────────────────────────────────
     if cmd_lower.startswith("resumen"):
-        wa.send_text(chat_id, "📋 Enviando resumen semanal a todos los grupos...")
-        import asyncio
-        from app.scheduler.summary import send_weekly_summaries
-        asyncio.create_task(send_weekly_summaries())
+        from datetime import timedelta
+        from app.utils.summary_formatter import generate_weekly_summary
+        import pytz
+
+        tz = pytz.timezone("America/Panama")
+        today = datetime.now(tz).date()
+        # Next Monday → Friday
+        days_until_monday = (7 - today.weekday()) % 7
+        start = today + timedelta(days=days_until_monday if days_until_monday else 7)
+        end = start + timedelta(days=4)
+
+        parent = db.query(models.Parent).filter_by(
+            whatsapp_jid=chat_id.replace("@c.us", "@lid").split("@")[0]
+        ).first()
+        if not parent:
+            # Fallback: find by admin_phone
+            parents = db.query(models.Parent).filter_by(is_active=True).all()
+            parent = next((p for p in parents), None)
+
+        if not parent or not parent.student_ids:
+            wa.send_text(chat_id, "❌ No hay estudiantes vinculados.")
+            return True
+
+        raw_conn = db.connection().connection.dbapi_connection
+        parts = []
+        for sid in parent.student_ids:
+            msg = generate_weekly_summary(raw_conn, sid, start, end)
+            if msg:
+                parts.append(msg)
+
+        if parts:
+            wa.send_text(chat_id, "\n\n".join(parts))
+        else:
+            wa.send_text(chat_id, f"📭 No hay actividades para la semana del {start.strftime('%d/%m')}.")
         return True
 
     return False   # not an admin command
