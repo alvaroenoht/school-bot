@@ -13,16 +13,20 @@ Falls back to qa_handler on any LLM error.
 """
 import json
 import logging
+import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import openai
+import pytz
 from sqlalchemy.orm import Session
 
 from app.bot import intent_tools, qa_handler
 from app.config import get_settings
 from app.db import models
 from app.whatsapp.client import WahaClient
+
+PANAMA_TZ = pytz.timezone("America/Panama")
 
 logger = logging.getLogger(__name__)
 wa = WahaClient()
@@ -64,67 +68,6 @@ def _append_history(chat_id: str, role: str, content: str):
 # ── OpenAI function-calling tool schemas ───────────────────────────────────────
 
 TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "query_assignments_day",
-            "description": (
-                "Consulta las actividades/tareas escolares para un día específico. "
-                "Usa offset_days SOLO para 'hoy' (0) o 'mañana' (1). "
-                "Para cualquier día de la semana por nombre (lunes, martes, etc.) "
-                "usa weekday: 0=lunes, 1=martes, 2=miércoles, 3=jueves, 4=viernes."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "offset_days": {
-                        "type": "integer",
-                        "description": "Días desde hoy (0=hoy, 1=mañana)",
-                    },
-                    "weekday": {
-                        "type": "integer",
-                        "description": "Día de la semana: 0=lunes..4=viernes",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_assignments_week",
-            "description": "Muestra el resumen semanal completo de actividades y materiales para todos los estudiantes.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "explain_assignment",
-            "description": (
-                "Busca una tarea o actividad específica por palabra clave "
-                "(materia, tema, título). Incluye formativas Y sumativas. "
-                "Devuelve la descripción COMPLETA del portal Seduca, "
-                "resumen y materiales. Usa esta herramienta para profundizar "
-                "en cualquier actividad cuando el padre quiera más detalle. "
-                "NO generes respuestas a las tareas — solo explica qué hay que hacer."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {
-                        "type": "string",
-                        "description": (
-                            "Palabra clave para buscar. Usa el nombre FORMAL de la materia, no sinónimos coloquiales. "
-                            "Ejemplos: piscina→natación, gym→gimnasia, compu→robótica, reli→fe, sociales→ciencias sociales. "
-                            "Si no estás seguro, usa el término más formal/académico."
-                        ),
-                    },
-                },
-                "required": ["search_term"],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -199,34 +142,34 @@ Tu rol:
 
 Reglas estrictas:
 - Respuestas CORTAS (2-4 líneas máximo, estilo WhatsApp)
-- SIEMPRE usa herramientas para cualquier pregunta sobre tareas, materias, actividades o calendario \
-— NUNCA respondas de memoria ni inventes datos
-- Si preguntan por una materia o tema específico, usa explain_assignment para buscar los detalles completos
-- Si preguntan por un día, usa query_assignments_day
-- Si preguntan por la semana, usa query_assignments_week
-- Solo responde sin herramientas para saludos o preguntas generales sobre cómo funciona el bot
+- Usa los DATOS DE ACTIVIDADES que se proporcionan abajo para responder preguntas sobre tareas, materias y calendario
+- NUNCA inventes datos — si no aparece en las actividades de abajo, di que no hay información
 - NUNCA menciones el nombre del estudiante en tus respuestas — mantén la respuesta impersonal
 - NUNCA des respuestas a tareas escolares ni ayudes a hacer trampa
 - Si te piden ayuda con una tarea, explica los pasos o conceptos pero no des la respuesta final
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
+- Usa herramientas SOLO para pagos y comprobantes
 
 {sender_context}
 
-{fundraiser_context}\
+{fundraiser_context}
+
+{assignments_context}\
 """
 
 
-def _build_system_prompt(sender, is_admin: bool, db: Session) -> str:
-    """Build system prompt with sender context and active fundraisers."""
-    from app.bot.qa_handler import PANAMA_TZ
+def _build_system_prompt(sender, is_admin: bool, db: Session, chat_id: str = "") -> str:
+    """Build system prompt with sender context, fundraisers, and assignments."""
     today = datetime.now(PANAMA_TZ).date()
     sender_ctx = _build_sender_context(sender, is_admin, db)
     fundraiser_ctx = _build_fundraiser_context(db)
+    assignments_ctx = _build_assignments_context(sender, db, chat_id)
     return _SYSTEM_TEMPLATE.format(
         today_weekday=_DAY_NAMES[today.weekday()],
         today_date=today.strftime("%d/%m/%Y"),
         sender_context=sender_ctx,
         fundraiser_context=fundraiser_ctx,
+        assignments_context=assignments_ctx,
     )
 
 
@@ -267,6 +210,99 @@ def _build_fundraiser_context(db: Session) -> str:
     return "\n".join(lines)
 
 
+_DAYS_ES = {
+    0: "Lunes", 1: "Martes", 2: "Miércoles",
+    3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo",
+}
+
+
+def _strip_html(html: str) -> str:
+    """Strip HTML tags and collapse whitespace."""
+    if not html:
+        return ""
+    text = re.sub(r"<br\s*/?>", "\n", html, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
+    """Load this week + next week assignments for the scoped student into context."""
+    if not isinstance(sender, models.Parent):
+        return "Actividades escolares: no disponible (usuario no registrado)."
+
+    all_ids = sender.student_ids or []
+    if not all_ids:
+        return "Actividades escolares: no hay estudiantes vinculados."
+
+    # Scope to classroom if in a group
+    student_ids = all_ids
+    if chat_id and "@g.us" in chat_id:
+        classroom = (
+            db.query(models.Classroom)
+            .filter_by(whatsapp_group_id=chat_id, is_active=True)
+            .first()
+        )
+        if classroom:
+            scoped = [
+                s.id for s in db.query(models.Student)
+                .filter(models.Student.id.in_(all_ids), models.Student.classroom_id == classroom.id)
+                .all()
+            ]
+            if scoped:
+                student_ids = scoped
+
+    # Date range: this week Monday → next week Friday
+    today = datetime.now(PANAMA_TZ).date()
+    this_monday = today - timedelta(days=today.weekday())
+    next_friday = this_monday + timedelta(days=11)  # 2 full weeks
+
+    # Build subject lookup
+    subjects = {s.materia_id: (s.name, s.icon or "📘") for s in db.query(models.Subject).all()}
+
+    assignments = (
+        db.query(models.Assignment)
+        .filter(
+            models.Assignment.student_id.in_(student_ids),
+            models.Assignment.date >= this_monday.isoformat(),
+            models.Assignment.date <= next_friday.isoformat(),
+        )
+        .order_by(models.Assignment.date)
+        .all()
+    )
+
+    if not assignments:
+        return "Actividades escolares: no hay actividades registradas para esta semana ni la próxima."
+
+    lines = [f"DATOS DE ACTIVIDADES ({this_monday.strftime('%d/%m')} al {next_friday.strftime('%d/%m')}):"]
+    current_date = None
+    for a in assignments:
+        if a.date != current_date:
+            current_date = a.date
+            try:
+                d = datetime.strptime(a.date, "%Y-%m-%d").date()
+                day_name = _DAYS_ES.get(d.weekday(), "")
+                lines.append(f"\n[{day_name} {d.strftime('%d/%m')}]")
+            except ValueError:
+                lines.append(f"\n[{a.date}]")
+
+        subj_name, subj_icon = subjects.get(a.subject_id, (f"Materia {a.subject_id}", "📘"))
+        lines.append(f"  {subj_icon} {subj_name} — {a.title} ({a.type})")
+        if a.summary:
+            lines.append(f"    Resumen: {a.summary}")
+        if a.description:
+            desc = _strip_html(a.description)
+            if len(desc) > 200:
+                desc = desc[:200] + "..."
+            lines.append(f"    Descripción: {desc}")
+        if a.materials:
+            lines.append(f"    🎒 Materiales: {a.materials}")
+        if a.short_url:
+            lines.append(f"    🔗 {a.short_url}")
+
+    return "\n".join(lines)
+
+
 # ── Main handler ───────────────────────────────────────────────────────────────
 
 async def handle(
@@ -304,7 +340,7 @@ async def handle(
         # No text and no image — nothing to process
         return
 
-    system_prompt = _build_system_prompt(sender, is_admin, db)
+    system_prompt = _build_system_prompt(sender, is_admin, db, chat_id)
 
     # Save user message to history
     _append_history(chat_id, "user", user_content)
@@ -322,7 +358,7 @@ async def handle(
             tools=TOOLS,
             tool_choice="auto",
             temperature=0.3,
-            max_tokens=300,
+            max_tokens=500,
         )
 
         message = response.choices[0].message
