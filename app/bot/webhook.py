@@ -408,13 +408,13 @@ async def _handle_parent_resumen(parent: models.Parent, chat_id: str, db) -> Non
                 pdf_path = os.path.join(tmpdir, filename)
                 create_weekly_pdf(data_by_day, pdf_path, week_dates)
 
-                # Upload to S3 and send short link
-                from app.utils.s3_upload import upload_file_to_s3, create_short_link
-                from app.config import get_settings
-                settings = get_settings()
+                # Upload to S3 and send shortened link
+                from app.utils.s3_upload import upload_file_to_s3, generate_presigned_url
+                from app.utils.helpers import shorten_url
                 s3_key = f"resumenes/{start.strftime('%Y-%m-%d')}/{filename}"
-                upload_file_to_s3(pdf_path, s3_key, settings.s3_bucket)
-                short_url = create_short_link(db, s3_key)
+                upload_file_to_s3(pdf_path, s3_key)
+                presigned = generate_presigned_url(s3_key)
+                short_url = shorten_url(presigned)
                 wa_client.send_text(
                     chat_id,
                     f"\U0001f4c4 *PDF de {student_label}:*\n{short_url}",
