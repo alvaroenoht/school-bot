@@ -2,9 +2,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
 from app.bot.webhook import router as webhook_router
-from app.db.database import engine
+from app.db.database import engine, SessionLocal
+from app.db import models
 from app.db.models import Base
 from app.scheduler.jobs import create_scheduler
 
@@ -37,3 +39,18 @@ app.include_router(webhook_router)
 def health_check():
     """Used by Portainer / ALB health checks."""
     return {"status": "ok"}
+
+
+@app.get("/dl/{code}")
+def download_redirect(code: str):
+    """Redirect a short link code to a fresh S3 presigned URL."""
+    from app.utils.s3_upload import generate_presigned_url
+    db = SessionLocal()
+    try:
+        link = db.query(models.ShortLink).filter_by(code=code).first()
+        if not link:
+            return {"error": "not found"}
+        url = generate_presigned_url(link.s3_key)
+        return RedirectResponse(url, status_code=302)
+    finally:
+        db.close()

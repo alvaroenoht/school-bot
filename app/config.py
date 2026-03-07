@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_region: str = "us-east-1"
     s3_bucket: str = "schoolbot-reports"
+    base_url: str = "http://localhost:8000"  # public URL for short links
 
     class Config:
         env_file = ".env"

@@ -3,6 +3,8 @@ S3 upload utilities — upload PDF reports and generate presigned download URLs.
 Uses AWS credentials from .env (already configured for Textract).
 """
 import logging
+import secrets
+import string
 
 import boto3
 
@@ -45,3 +47,19 @@ def generate_presigned_url(
         ExpiresIn=expiration,
     )
     return url
+
+
+def create_short_link(db, s3_key: str) -> str:
+    """Create a short link for an S3 object and return the full short URL."""
+    from app.db import models
+
+    settings = get_settings()
+    alphabet = string.ascii_lowercase + string.digits
+    code = "".join(secrets.choice(alphabet) for _ in range(8))
+    while db.query(models.ShortLink).filter_by(code=code).first():
+        code = "".join(secrets.choice(alphabet) for _ in range(8))
+
+    db.add(models.ShortLink(code=code, s3_key=s3_key))
+    db.commit()
+
+    return f"{settings.base_url.rstrip('/')}/dl/{code}"

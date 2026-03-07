@@ -214,3 +214,13 @@ class OrderItem(Base):
 
     payment = relationship("Payment", back_populates="order_items")
     product = relationship("FundraiserProduct", back_populates="order_items")
+
+
+class ShortLink(Base):
+    """Short URL code that redirects to an S3 presigned download."""
+    __tablename__ = "short_links"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    code       = Column(String(12), unique=True, nullable=False, index=True)
+    s3_key     = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
