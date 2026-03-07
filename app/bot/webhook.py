@@ -381,17 +381,18 @@ async def _handle_parent_resumen(parent: models.Parent, chat_id: str, db) -> Non
 
     wa_client = WahaClient()
     raw_conn = db.connection().connection.dbapi_connection
+    any_summary_sent = False
 
     for sid in student_ids:
         # Text summary
         message = generate_weekly_summary(raw_conn, sid, start, end)
         if message:
             wa_client.send_text(chat_id, message)
+            any_summary_sent = True
 
         # PDF generation + S3 upload
         try:
             data_by_day = generate_weekly_data(raw_conn, sid, start, end)
-            # Check if there's any data
             has_data = any(
                 data_by_day.get(day, {}).get("sumativas") or data_by_day.get(day, {}).get("materials")
                 for day in data_by_day
@@ -399,7 +400,7 @@ async def _handle_parent_resumen(parent: models.Parent, chat_id: str, db) -> Non
             if not has_data:
                 continue
 
-            student = db.query(models.Student).get(sid)
+            student = db.get(models.Student, sid)
             student_label = student.name if student else f"estudiante_{sid}"
 
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -421,9 +422,7 @@ async def _handle_parent_resumen(parent: models.Parent, chat_id: str, db) -> Non
         except Exception as e:
             logger.error(f"PDF generation/upload failed for student {sid}: {e}")
 
-    if not any(
-        generate_weekly_summary(raw_conn, sid, start, end) for sid in student_ids
-    ):
+    if not any_summary_sent:
         wa_client.send_text(
             chat_id,
             f"\U0001f4ed No hay actividades para la semana del {start.strftime('%d/%m')}.",
