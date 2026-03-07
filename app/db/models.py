@@ -105,7 +105,7 @@ class Assignment(Base):
     __tablename__ = "assignments"
 
     id           = Column(Integer, primary_key=True)   # asigId from Seduca
-    student_id   = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    student_id   = Column(Integer, ForeignKey("students.id"), primary_key=True, index=True)
     title        = Column(Text)
     type         = Column(String)
     date         = Column(String, index=True)          # YYYY-MM-DD
