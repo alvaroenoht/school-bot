@@ -42,6 +42,20 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
         if not name:
             wa.send_text(chat_id, "Uso: `/fundraiser create <nombre>`")
             return True
+
+        # Enforce unique fundraiser names (case-insensitive)
+        dup = db.query(models.Fundraiser).filter(
+            models.Fundraiser.name.ilike(name)
+        ).first()
+        if dup:
+            wa.send_text(
+                chat_id,
+                f"❌ Ya existe una actividad con ese nombre:\n"
+                f"  • *{dup.name}* (ID `{dup.id}`) — {dup.status}\n\n"
+                "Usa un nombre diferente.",
+            )
+            return True
+
         # Start conversational flow
         existing = db.query(models.ConversationSession).filter_by(chat_jid=chat_id).first()
         if existing:

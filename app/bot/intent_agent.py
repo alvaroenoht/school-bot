@@ -144,7 +144,7 @@ Reglas estrictas:
 - Respuestas CORTAS (2-4 líneas máximo, estilo WhatsApp)
 - Usa los DATOS DE ACTIVIDADES que se proporcionan abajo para responder preguntas sobre tareas, materias y calendario
 - NUNCA inventes datos — si no aparece en las actividades de abajo, di que no hay información
-- NUNCA menciones el nombre del estudiante en tus respuestas — mantén la respuesta impersonal
+- {student_name_rule}
 - NUNCA des respuestas a tareas escolares ni ayudes a hacer trampa
 - Si te piden ayuda con una tarea, explica los pasos o conceptos pero no des la respuesta final
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
@@ -166,12 +166,20 @@ def _build_system_prompt(sender, is_admin: bool, db: Session, chat_id: str = "")
     sender_ctx = _build_sender_context(sender, is_admin, db)
     fundraiser_ctx = _build_fundraiser_context(db)
     assignments_ctx = _build_assignments_context(sender, db, chat_id)
+
+    is_group = chat_id and "@g.us" in chat_id
+    if is_group:
+        name_rule = "NUNCA menciones el nombre del estudiante en tus respuestas — mantén la respuesta impersonal"
+    else:
+        name_rule = "En mensajes directos, usa el nombre del estudiante para distinguir entre hijos si hay más de uno"
+
     return _SYSTEM_TEMPLATE.format(
         today_weekday=_DAY_NAMES[today.weekday()],
         today_date=today.strftime("%d/%m/%Y"),
         sender_context=sender_ctx,
         fundraiser_context=fundraiser_ctx,
         assignments_context=assignments_ctx,
+        student_name_rule=name_rule,
     )
 
 
@@ -228,55 +236,8 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
-def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
-    """Load this week + next week assignments for the scoped student into context."""
-    if not isinstance(sender, models.Parent):
-        return "Actividades escolares: no disponible (usuario no registrado)."
-
-    all_ids = sender.student_ids or []
-    if not all_ids:
-        return "Actividades escolares: no hay estudiantes vinculados."
-
-    # Scope to classroom if in a group
-    student_ids = all_ids
-    if chat_id and "@g.us" in chat_id:
-        classroom = (
-            db.query(models.Classroom)
-            .filter_by(whatsapp_group_id=chat_id, is_active=True)
-            .first()
-        )
-        if classroom:
-            scoped = [
-                s.id for s in db.query(models.Student)
-                .filter(models.Student.id.in_(all_ids), models.Student.classroom_id == classroom.id)
-                .all()
-            ]
-            if scoped:
-                student_ids = scoped
-
-    # Date range: this week Monday → next week Friday
-    today = datetime.now(PANAMA_TZ).date()
-    this_monday = today - timedelta(days=today.weekday())
-    next_friday = this_monday + timedelta(days=11)  # 2 full weeks
-
-    # Build subject lookup
-    subjects = {s.materia_id: (s.name, s.icon or "📘") for s in db.query(models.Subject).all()}
-
-    assignments = (
-        db.query(models.Assignment)
-        .filter(
-            models.Assignment.student_id.in_(student_ids),
-            models.Assignment.date >= this_monday.isoformat(),
-            models.Assignment.date <= next_friday.isoformat(),
-        )
-        .order_by(models.Assignment.date)
-        .all()
-    )
-
-    if not assignments:
-        return "Actividades escolares: no hay actividades registradas para esta semana ni la próxima."
-
-    lines = [f"DATOS DE ACTIVIDADES ({this_monday.strftime('%d/%m')} al {next_friday.strftime('%d/%m')}):"]
+def _append_assignment_lines(assignments, subjects: dict, lines: list) -> None:
+    """Append formatted assignment lines grouped by date to the lines list."""
     current_date = None
     for a in assignments:
         if a.date != current_date:
@@ -301,6 +262,88 @@ def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
             lines.append(f"    🎒 Materiales: {a.materials}")
         if a.short_url:
             lines.append(f"    🔗 {a.short_url}")
+
+
+def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
+    """Load this week + next week assignments for the scoped student(s) into context.
+
+    In DMs with multiple students, groups assignments under student name headers.
+    In groups, shows only the classroom-scoped student (no names).
+    """
+    if not isinstance(sender, models.Parent):
+        return "Actividades escolares: no disponible (usuario no registrado)."
+
+    all_ids = sender.student_ids or []
+    if not all_ids:
+        return "Actividades escolares: no hay estudiantes vinculados."
+
+    is_group = chat_id and "@g.us" in chat_id
+
+    # Scope to classroom if in a group
+    student_ids = all_ids
+    if is_group:
+        classroom = (
+            db.query(models.Classroom)
+            .filter_by(whatsapp_group_id=chat_id, is_active=True)
+            .first()
+        )
+        if classroom:
+            scoped = [
+                s.id for s in db.query(models.Student)
+                .filter(models.Student.id.in_(all_ids), models.Student.classroom_id == classroom.id)
+                .all()
+            ]
+            if scoped:
+                student_ids = scoped
+
+    # Date range: this week Monday → next week Friday
+    today = datetime.now(PANAMA_TZ).date()
+    this_monday = today - timedelta(days=today.weekday())
+    next_friday = this_monday + timedelta(days=11)  # 2 full weeks
+
+    # Build subject lookup
+    subjects = {s.materia_id: (s.name, s.icon or "📘") for s in db.query(models.Subject).all()}
+
+    # Build student name lookup (for DMs with multiple students)
+    student_names = {}
+    if not is_group and len(student_ids) > 1:
+        for s in db.query(models.Student).filter(models.Student.id.in_(student_ids)).all():
+            student_names[s.id] = s.name
+
+    assignments = (
+        db.query(models.Assignment)
+        .filter(
+            models.Assignment.student_id.in_(student_ids),
+            models.Assignment.date >= this_monday.isoformat(),
+            models.Assignment.date <= next_friday.isoformat(),
+        )
+        .order_by(models.Assignment.date)
+        .all()
+    )
+
+    if not assignments:
+        return "Actividades escolares: no hay actividades registradas para esta semana ni la próxima."
+
+    lines = [f"DATOS DE ACTIVIDADES ({this_monday.strftime('%d/%m')} al {next_friday.strftime('%d/%m')}):"]
+
+    # DM with multiple students → group by student name
+    if student_names:
+        from collections import defaultdict
+        by_student: dict[int, list] = defaultdict(list)
+        for a in assignments:
+            by_student[a.student_id].append(a)
+
+        for sid in student_ids:
+            name = student_names.get(sid, f"Estudiante {sid}")
+            lines.append(f"\n👤 *{name}*:")
+            student_assignments = by_student.get(sid, [])
+            if student_assignments:
+                _append_assignment_lines(student_assignments, subjects, lines)
+            else:
+                lines.append("  (sin actividades)")
+    else:
+        # Single student or group — flat list
+        _append_assignment_lines(assignments, subjects, lines)
 
     return "\n".join(lines)
 

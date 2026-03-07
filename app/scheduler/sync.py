@@ -5,6 +5,8 @@ and upserts them into the database via GPT analysis.
 Refactored from the original seduca_sync.py AppDaemon class.
 """
 import logging
+import time
+from collections import defaultdict
 from datetime import datetime
 
 from app.api.gpt_analyzer import analyze_materials
@@ -13,8 +15,13 @@ from app.db.database import SessionLocal
 from app.db import models
 from app.utils.crypto import decrypt
 from app.utils.helpers import shorten_url
+from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
+wa = WahaClient()
+
+# Delay between Seduca API calls to avoid overloading the server (seconds)
+_API_DELAY = 1.5
 
 # ── Subject emoji auto-picker ─────────────────────────────────────────────────
 
@@ -71,8 +78,15 @@ async def run_sync(classroom_id: int | None = None):
     """
     Sync assignments for all active classrooms (or one specific classroom).
     Safe to call from the scheduler or an admin command.
+
+    After sync, sends change notifications to linked WhatsApp groups.
     """
     db = SessionLocal()
+    # Track synced student IDs to avoid re-syncing with duplicate credentials
+    synced_student_ids: set[int] = set()
+    # Collect changes per student for notification: {student_id: [{"type", "title", "subject_name"}]}
+    changes_by_student: dict[int, list[dict]] = defaultdict(list)
+
     try:
         # Get parents with credentials
         parent_query = db.query(models.Parent).filter(
@@ -85,12 +99,24 @@ async def run_sync(classroom_id: int | None = None):
             return
 
         for parent in parents:
-            # Get students linked to this parent
-            student_query = db.query(models.Student).filter_by(parent_id=parent.id)
+            # Get students linked to this parent via student_ids (supports multiple parents)
+            student_ids = parent.student_ids or []
+            if not student_ids:
+                continue
+
+            student_query = db.query(models.Student).filter(
+                models.Student.id.in_(student_ids)
+            )
             if classroom_id:
                 student_query = student_query.filter_by(classroom_id=classroom_id)
             students = student_query.all()
             if not students:
+                continue
+
+            # Skip students already synced by another parent with same credentials
+            unseen = [s for s in students if s.id not in synced_student_ids]
+            if not unseen:
+                logger.info(f"Skipping parent {parent.id} — students already synced.")
                 continue
 
             try:
@@ -101,10 +127,11 @@ async def run_sync(classroom_id: int | None = None):
                 continue
 
             # Use school_url from the first student's classroom
-            first_classroom = db.query(models.Classroom).get(students[0].classroom_id)
+            first_classroom = db.query(models.Classroom).get(unseen[0].classroom_id)
             if not first_classroom:
                 continue
 
+            time.sleep(_API_DELAY)  # rate limit: delay before login
             client = SeducaClient(username, password, base_url=first_classroom.school_url)
             if not client.login():
                 logger.error(f"Login failed for parent {parent.id} ({parent.first_name} {parent.last_name})")
@@ -112,27 +139,36 @@ async def run_sync(classroom_id: int | None = None):
 
             logger.info(f"Syncing parent {parent.id} ({parent.first_name} {parent.last_name})")
 
-            for student in students:
+            for student in unseen:
                 classroom = db.query(models.Classroom).get(student.classroom_id)
                 if not classroom or not classroom.is_active:
                     continue
 
+                time.sleep(_API_DELAY)  # rate limit: delay before switching child
                 if not client.switch_child(student.id):
                     logger.warning(f"Could not switch to student {student.id}")
                     continue
 
+                time.sleep(_API_DELAY)  # rate limit: delay before fetching list
                 items = client.fetch_assignment_list()
                 logger.info(f"  {len(items)} assignments fetched for student {student.id}")
 
                 for item in items:
                     try:
-                        _upsert_assignment(item, student.id, client, db)
+                        time.sleep(_API_DELAY)  # rate limit: delay between assignment details
+                        change = _upsert_assignment(item, student.id, client, db)
+                        if change:
+                            changes_by_student[student.id].append(change)
                     except Exception as e:
                         logger.error(f"  Error processing assignment {item.get('asigId')}: {e}")
 
                 db.commit()
+                synced_student_ids.add(student.id)
 
             logger.info(f"Sync complete for parent {parent.id}")
+
+        # ── Send change notifications to WhatsApp groups ──────────────────────
+        _send_change_notifications(changes_by_student, db)
 
     finally:
         db.close()
@@ -140,7 +176,8 @@ async def run_sync(classroom_id: int | None = None):
 
 # ── Private helpers ────────────────────────────────────────────────────────────
 
-def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db):
+def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db) -> dict | None:
+    """Upsert an assignment. Returns change info dict if new/updated, None otherwise."""
     asig_id     = int(item["asigId"])
     title       = item["asigNombre"]
     date        = item["asigFecha"]
@@ -160,7 +197,7 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db):
     description_html = client.fetch_assignment_description(asig_id)
     if not description_html:
         logger.warning(f"  No description for assignment {asig_id}, skipping.")
-        return
+        return None
 
     link      = f"{client.base_url}/2/parent/assignments/show?id={asig_id}"
     short_url = shorten_url(link)
@@ -182,9 +219,10 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db):
         needs_update = True
 
     if not needs_update and existing:
-        return
+        return None
 
     now = datetime.utcnow().isoformat()
+    change_type = None
 
     if existing:
         existing.title       = title
@@ -197,6 +235,7 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db):
         existing.summary     = summary
         existing.updated_at  = now
         existing.short_url   = short_url
+        change_type = "updated"
         logger.debug(f"  Updated assignment {asig_id}")
     else:
         db.add(models.Assignment(
@@ -213,4 +252,35 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db):
             updated_at=now,
             short_url=short_url,
         ))
+        change_type = "new"
         logger.debug(f"  Inserted new assignment {asig_id}")
+
+    return {
+        "type": change_type,
+        "title": title,
+        "subject_name": materia_name or f"Materia {subject_id}",
+    }
+
+
+def _send_change_notifications(
+    changes_by_student: dict[int, list[dict]], db
+) -> None:
+    """Send grouped change notifications to WhatsApp groups after sync."""
+    if not changes_by_student:
+        return
+
+    for student_id, changes in changes_by_student.items():
+        student = db.query(models.Student).get(student_id)
+        if not student or not student.classroom_id:
+            continue
+        classroom = db.query(models.Classroom).get(student.classroom_id)
+        if not classroom or not classroom.whatsapp_group_id:
+            continue
+
+        lines = ["📝 *Cambios detectados en actividades:*\n"]
+        for c in changes:
+            icon = "🆕" if c["type"] == "new" else "✏️"
+            suffix = " _(actualizado)_" if c["type"] == "updated" else ""
+            lines.append(f"{icon} *{c['subject_name']}*: {c['title']}{suffix}")
+
+        wa.send_text(classroom.whatsapp_group_id, "\n".join(lines))

@@ -30,10 +30,11 @@ class Settings(BaseSettings):
     summary_time: str = "18:30"        # HH:MM
     reminder_time: str = "07:00"       # HH:MM  Mon-Fri
 
-    # ── AWS (Textract for receipt OCR) ──────────────────────────────────────
+    # ── AWS (Textract for receipt OCR + S3 for PDF reports) ─────────────────
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "us-east-1"
+    s3_bucket: str = "schoolbot-reports"
 
     class Config:
         env_file = ".env"

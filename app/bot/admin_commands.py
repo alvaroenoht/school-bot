@@ -143,40 +143,21 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
 
     # ── resumen ────────────────────────────────────────────────────────────────
     if cmd_lower.startswith("resumen"):
-        from datetime import timedelta
-        from app.utils.summary_formatter import generate_weekly_summary
-        import pytz
-
-        tz = pytz.timezone("America/Panama")
-        today = datetime.now(tz).date()
-        # Next Monday → Friday
-        days_until_monday = (7 - today.weekday()) % 7
-        start = today + timedelta(days=days_until_monday if days_until_monday else 7)
-        end = start + timedelta(days=4)
-
+        # Find the admin's parent record
         parent = db.query(models.Parent).filter_by(
             whatsapp_jid=chat_id.replace("@c.us", "@lid").split("@")[0]
         ).first()
         if not parent:
-            # Fallback: find by admin_phone
-            parents = db.query(models.Parent).filter_by(is_active=True).all()
-            parent = next((p for p in parents), None)
+            # Fallback: find any active parent
+            parent = db.query(models.Parent).filter_by(is_active=True).first()
 
         if not parent or not parent.student_ids:
             wa.send_text(chat_id, "❌ No hay estudiantes vinculados.")
             return True
 
-        raw_conn = db.connection().connection.dbapi_connection
-        parts = []
-        for sid in parent.student_ids:
-            msg = generate_weekly_summary(raw_conn, sid, start, end)
-            if msg:
-                parts.append(msg)
-
-        if parts:
-            wa.send_text(chat_id, "\n\n".join(parts))
-        else:
-            wa.send_text(chat_id, f"📭 No hay actividades para la semana del {start.strftime('%d/%m')}.")
+        # Use shared handler (same as parent /resumen — text + PDF + S3)
+        from app.bot.webhook import _handle_parent_resumen
+        await _handle_parent_resumen(parent, chat_id, db)
         return True
 
     return False   # not an admin command
