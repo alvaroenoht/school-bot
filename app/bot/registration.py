@@ -206,9 +206,9 @@ async def handle(
         # Check if these students already exist (second parent with same creds)
         classroom_info = []  # [(student_dict, classroom_id)]
         for s in students:
-            existing_student = db.query(models.Student).get(s["id"])
-            if existing_student and existing_student.classroom_id:
-                # Reuse existing Student + Classroom records
+            existing_student = db.get(models.Student, s["id"])
+            if existing_student:
+                # Reuse existing Student + Classroom — don't touch parent_id or classroom_id
                 logger.info(
                     f"  Reusing existing student {s['id']} / classroom {existing_student.classroom_id} "
                     f"(second parent registration)"
@@ -229,7 +229,7 @@ async def handle(
                     classroom_id=classroom.id,
                     parent_id=parent.id,
                 )
-                db.merge(student_rec)
+                db.add(student_rec)
                 db.flush()
                 classroom_info.append((s, classroom.id))
 
