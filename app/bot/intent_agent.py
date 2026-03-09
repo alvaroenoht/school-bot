@@ -13,9 +13,12 @@ Falls back to qa_handler on any LLM error.
 """
 import json
 import logging
-from datetime import datetime
+import re
+import time
+from datetime import datetime, timedelta
 
 import openai
+import pytz
 from sqlalchemy.orm import Session
 
 from app.bot import intent_tools, qa_handler
@@ -23,69 +26,48 @@ from app.config import get_settings
 from app.db import models
 from app.whatsapp.client import WahaClient
 
+PANAMA_TZ = pytz.timezone("America/Panama")
+
 logger = logging.getLogger(__name__)
 wa = WahaClient()
+
+# ── Conversation memory (in-process, TTL-based) ──────────────────────────────
+# {chat_id: [(timestamp, role, content), ...]}
+_chat_history: dict[str, list[tuple[float, str, str]]] = {}
+_HISTORY_TTL = 30 * 60      # 30 minutes
+_HISTORY_MAX_MSGS = 10       # keep last N exchanges
+
+# Brief notes saved to history when a tool sends messages directly (returns None)
+_TOOL_HISTORY_NOTE = {
+    "query_assignments_week": "[Ya envié el resumen semanal de actividades]",
+    "start_payment": "[Se inició el flujo de pago]",
+    "start_receipt_flow": "[Se inició el proceso de comprobante de pago]",
+}
+
+
+def _get_history(chat_id: str) -> list[dict]:
+    """Return recent messages for this chat as OpenAI message dicts."""
+    entries = _chat_history.get(chat_id, [])
+    if not entries:
+        return []
+    # Prune expired
+    cutoff = time.time() - _HISTORY_TTL
+    entries = [(ts, role, content) for ts, role, content in entries if ts > cutoff]
+    _chat_history[chat_id] = entries
+    return [{"role": role, "content": content} for _, role, content in entries]
+
+
+def _append_history(chat_id: str, role: str, content: str):
+    """Add a message to the chat history."""
+    entries = _chat_history.setdefault(chat_id, [])
+    entries.append((time.time(), role, content))
+    # Trim to max
+    if len(entries) > _HISTORY_MAX_MSGS:
+        _chat_history[chat_id] = entries[-_HISTORY_MAX_MSGS:]
 
 # ── OpenAI function-calling tool schemas ───────────────────────────────────────
 
 TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "query_assignments_day",
-            "description": (
-                "Consulta las actividades/tareas escolares para un día específico. "
-                "Usa offset_days SOLO para 'hoy' (0) o 'mañana' (1). "
-                "Para cualquier día de la semana por nombre (lunes, martes, etc.) "
-                "usa weekday: 0=lunes, 1=martes, 2=miércoles, 3=jueves, 4=viernes."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "offset_days": {
-                        "type": "integer",
-                        "description": "Días desde hoy (0=hoy, 1=mañana)",
-                    },
-                    "weekday": {
-                        "type": "integer",
-                        "description": "Día de la semana: 0=lunes..4=viernes",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_assignments_week",
-            "description": "Muestra el resumen semanal completo de actividades y materiales para todos los estudiantes.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "explain_assignment",
-            "description": (
-                "Busca una tarea o actividad específica por palabra clave "
-                "(materia, tema, título). Incluye formativas Y sumativas. "
-                "Devuelve la descripción COMPLETA del portal Seduca, "
-                "resumen y materiales. Usa esta herramienta para profundizar "
-                "en cualquier actividad cuando el padre quiera más detalle. "
-                "NO generes respuestas a las tareas — solo explica qué hay que hacer."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {
-                        "type": "string",
-                        "description": "Palabra clave: materia (ciencias, español, inglés) o tema (nouns, lectura, etc.)",
-                    },
-                },
-                "required": ["search_term"],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -160,33 +142,44 @@ Tu rol:
 
 Reglas estrictas:
 - Respuestas CORTAS (2-4 líneas máximo, estilo WhatsApp)
-- SIEMPRE usa herramientas para cualquier pregunta sobre tareas, materias, actividades o calendario \
-— NUNCA respondas de memoria ni inventes datos
-- Si preguntan por una materia o tema específico, usa explain_assignment para buscar los detalles completos
-- Si preguntan por un día, usa query_assignments_day
-- Si preguntan por la semana, usa query_assignments_week
-- Solo responde sin herramientas para saludos o preguntas generales sobre cómo funciona el bot
+- Usa los DATOS DE ACTIVIDADES que se proporcionan abajo para responder preguntas sobre tareas, materias y calendario
+- NUNCA inventes datos — si no aparece en las actividades de abajo, di que no hay información
+- {student_name_rule}
 - NUNCA des respuestas a tareas escolares ni ayudes a hacer trampa
 - Si te piden ayuda con una tarea, explica los pasos o conceptos pero no des la respuesta final
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
+- Usa herramientas SOLO para pagos y comprobantes
+- NUNCA termines tu respuesta con una pregunta — responde de forma concisa y directa, sin preguntar "¿necesitas algo más?" ni similares
+- SIEMPRE incluye el link (🔗) de las actividades que menciones en tu respuesta, si está disponible en los datos
 
 {sender_context}
 
-{fundraiser_context}\
+{fundraiser_context}
+
+{assignments_context}\
 """
 
 
-def _build_system_prompt(sender, is_admin: bool, db: Session) -> str:
-    """Build system prompt with sender context and active fundraisers."""
-    from app.bot.qa_handler import PANAMA_TZ
+def _build_system_prompt(sender, is_admin: bool, db: Session, chat_id: str = "") -> str:
+    """Build system prompt with sender context, fundraisers, and assignments."""
     today = datetime.now(PANAMA_TZ).date()
     sender_ctx = _build_sender_context(sender, is_admin, db)
     fundraiser_ctx = _build_fundraiser_context(db)
+    assignments_ctx = _build_assignments_context(sender, db, chat_id)
+
+    is_group = chat_id and "@g.us" in chat_id
+    if is_group:
+        name_rule = "NUNCA menciones el nombre del estudiante en tus respuestas — mantén la respuesta impersonal"
+    else:
+        name_rule = "En mensajes directos, usa el nombre del estudiante para distinguir entre hijos si hay más de uno"
+
     return _SYSTEM_TEMPLATE.format(
         today_weekday=_DAY_NAMES[today.weekday()],
         today_date=today.strftime("%d/%m/%Y"),
         sender_context=sender_ctx,
         fundraiser_context=fundraiser_ctx,
+        assignments_context=assignments_ctx,
+        student_name_rule=name_rule,
     )
 
 
@@ -227,6 +220,134 @@ def _build_fundraiser_context(db: Session) -> str:
     return "\n".join(lines)
 
 
+_DAYS_ES = {
+    0: "Lunes", 1: "Martes", 2: "Miércoles",
+    3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo",
+}
+
+
+def _strip_html(html: str) -> str:
+    """Strip HTML tags and collapse whitespace."""
+    if not html:
+        return ""
+    text = re.sub(r"<br\s*/?>", "\n", html, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def _append_assignment_lines(assignments, subjects: dict, lines: list) -> None:
+    """Append formatted assignment lines grouped by date to the lines list."""
+    current_date = None
+    for a in assignments:
+        if a.date != current_date:
+            current_date = a.date
+            try:
+                d = datetime.strptime(a.date, "%Y-%m-%d").date()
+                day_name = _DAYS_ES.get(d.weekday(), "")
+                lines.append(f"\n[{day_name} {d.strftime('%d/%m')}]")
+            except ValueError:
+                lines.append(f"\n[{a.date}]")
+
+        subj_name, subj_icon = subjects.get(a.subject_id, (f"Materia {a.subject_id}", "📘"))
+        lines.append(f"  {subj_icon} {subj_name} — {a.title} ({a.type})")
+        if a.summary:
+            lines.append(f"    Resumen: {a.summary}")
+        if a.description:
+            desc = _strip_html(a.description)
+            if len(desc) > 200:
+                desc = desc[:200] + "..."
+            lines.append(f"    Descripción: {desc}")
+        if a.materials:
+            lines.append(f"    🎒 Materiales: {a.materials}")
+        if a.short_url:
+            lines.append(f"    🔗 {a.short_url}")
+
+
+def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
+    """Load this week + next week assignments for the scoped student(s) into context.
+
+    In DMs with multiple students, groups assignments under student name headers.
+    In groups, shows only the classroom-scoped student (no names).
+    """
+    if not isinstance(sender, models.Parent):
+        return "Actividades escolares: no disponible (usuario no registrado)."
+
+    all_ids = sender.student_ids or []
+    if not all_ids:
+        return "Actividades escolares: no hay estudiantes vinculados."
+
+    is_group = chat_id and "@g.us" in chat_id
+
+    # Scope to classroom if in a group
+    student_ids = all_ids
+    if is_group:
+        classroom = (
+            db.query(models.Classroom)
+            .filter_by(whatsapp_group_id=chat_id, is_active=True)
+            .first()
+        )
+        if classroom:
+            scoped = [
+                s.id for s in db.query(models.Student)
+                .filter(models.Student.id.in_(all_ids), models.Student.classroom_id == classroom.id)
+                .all()
+            ]
+            if scoped:
+                student_ids = scoped
+
+    # Date range: this week Monday → next week Friday
+    today = datetime.now(PANAMA_TZ).date()
+    this_monday = today - timedelta(days=today.weekday())
+    next_friday = this_monday + timedelta(days=11)  # 2 full weeks
+
+    # Build subject lookup
+    subjects = {s.materia_id: (s.name, s.icon or "📘") for s in db.query(models.Subject).all()}
+
+    # Build student name lookup (for DMs with multiple students)
+    student_names = {}
+    if not is_group and len(student_ids) > 1:
+        for s in db.query(models.Student).filter(models.Student.id.in_(student_ids)).all():
+            student_names[s.id] = s.name
+
+    assignments = (
+        db.query(models.Assignment)
+        .filter(
+            models.Assignment.student_id.in_(student_ids),
+            models.Assignment.date >= this_monday.isoformat(),
+            models.Assignment.date <= next_friday.isoformat(),
+        )
+        .order_by(models.Assignment.date)
+        .all()
+    )
+
+    if not assignments:
+        return "Actividades escolares: no hay actividades registradas para esta semana ni la próxima."
+
+    lines = [f"DATOS DE ACTIVIDADES ({this_monday.strftime('%d/%m')} al {next_friday.strftime('%d/%m')}):"]
+
+    # DM with multiple students → group by student name
+    if student_names:
+        from collections import defaultdict
+        by_student: dict[int, list] = defaultdict(list)
+        for a in assignments:
+            by_student[a.student_id].append(a)
+
+        for sid in student_ids:
+            name = student_names.get(sid, f"Estudiante {sid}")
+            lines.append(f"\n👤 *{name}*:")
+            student_assignments = by_student.get(sid, [])
+            if student_assignments:
+                _append_assignment_lines(student_assignments, subjects, lines)
+            else:
+                lines.append("  (sin actividades)")
+    else:
+        # Single student or group — flat list
+        _append_assignment_lines(assignments, subjects, lines)
+
+    return "\n".join(lines)
+
+
 # ── Main handler ───────────────────────────────────────────────────────────────
 
 async def handle(
@@ -264,15 +385,17 @@ async def handle(
         # No text and no image — nothing to process
         return
 
-    system_prompt = _build_system_prompt(sender, is_admin, db)
+    system_prompt = _build_system_prompt(sender, is_admin, db, chat_id)
+
+    # Save user message to history
+    _append_history(chat_id, "user", user_content)
 
     try:
         client = openai.OpenAI(api_key=settings.openai_api_key)
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ]
+        # Build messages: system + recent history (already includes current msg)
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(_get_history(chat_id))
 
         response = client.chat.completions.create(
             model=settings.openai_model,
@@ -280,50 +403,60 @@ async def handle(
             tools=TOOLS,
             tool_choice="auto",
             temperature=0.3,
-            max_tokens=300,
+            max_tokens=500,
         )
 
         message = response.choices[0].message
 
         # ── Tool calls ────────────────────────────────────────────────────
         if message.tool_calls:
-            tool_call = message.tool_calls[0]  # handle first tool call
-            fn_name = tool_call.function.name
-            fn_args = json.loads(tool_call.function.arguments)
+            # Dispatch ALL tool calls (LLM may request multiple)
+            has_data = False
+            tool_results: list[tuple[str, str, str | None]] = []  # (call_id, fn_name, result)
 
-            logger.info(
-                "INTENT route=llm jid=%s intent=%s args=%s",
-                raw_jid, fn_name, fn_args,
-            )
+            for tool_call in message.tool_calls:
+                fn_name = tool_call.function.name
+                fn_args = json.loads(tool_call.function.arguments)
 
-            # Permission check
-            if intent_tools.is_admin_only(fn_name) and not is_admin:
-                wa.send_text(chat_id, "Ese comando es solo para administradores. 🔒")
-                return
+                logger.info(
+                    "INTENT route=llm jid=%s intent=%s args=%s",
+                    raw_jid, fn_name, fn_args,
+                )
 
-            result = await intent_tools.dispatch(
-                fn_name,
-                fn_args,
-                raw_jid=raw_jid,
-                chat_id=chat_id,
-                text=text,
-                db=db,
-                sender=sender,
-                is_admin=is_admin,
-                message_id=message_id,
-                payload=payload,
-            )
+                # Permission check
+                if intent_tools.is_admin_only(fn_name) and not is_admin:
+                    tool_results.append((tool_call.id, fn_name, "Comando solo para administradores."))
+                    continue
 
-            # If tool returned data, feed it back to the LLM for a natural response
-            if result is not None:
-                logger.info("INTENT route=llm_multiturn jid=%s tool=%s", raw_jid, fn_name)
+                result = await intent_tools.dispatch(
+                    fn_name,
+                    fn_args,
+                    raw_jid=raw_jid,
+                    chat_id=chat_id,
+                    text=text,
+                    db=db,
+                    sender=sender,
+                    is_admin=is_admin,
+                    message_id=message_id,
+                    payload=payload,
+                )
+                tool_results.append((tool_call.id, fn_name, result))
+                if result is not None:
+                    has_data = True
+
+            # If any tool returned data, feed ALL results back to the LLM
+            if has_data:
+                first_fn = tool_results[0][1]
+                logger.info("INTENT route=llm_multiturn jid=%s tools=%d first=%s",
+                            raw_jid, len(tool_results), first_fn)
 
                 messages.append(message.model_dump())
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result,
-                })
+                for call_id, fn_name, result in tool_results:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": result or _TOOL_HISTORY_NOTE.get(fn_name, f"[{fn_name} ejecutado]"),
+                    })
 
                 followup = client.chat.completions.create(
                     model=settings.openai_model,
@@ -334,16 +467,23 @@ async def handle(
 
                 reply = followup.choices[0].message.content
                 if reply:
+                    _append_history(chat_id, "assistant", reply)
                     wa.send_text(chat_id, reply)
                 else:
-                    # LLM returned empty — send the raw data as fallback
-                    wa.send_text(chat_id, result)
-            # else: tool already sent WA message (payment flows, etc.)
+                    combined = "\n\n".join(r for _, _, r in tool_results if r)
+                    _append_history(chat_id, "assistant", combined)
+                    wa.send_text(chat_id, combined)
+            else:
+                # All tools sent WA messages directly — save a note to history
+                notes = [_TOOL_HISTORY_NOTE.get(fn, f"[Se ejecutó {fn}]")
+                         for _, fn, _ in tool_results]
+                _append_history(chat_id, "assistant", " ".join(notes))
             return
 
         # ── Plain text response ───────────────────────────────────────────
         if message.content:
             logger.info("INTENT route=llm_text jid=%s", raw_jid)
+            _append_history(chat_id, "assistant", message.content)
             wa.send_text(chat_id, message.content)
             return
 

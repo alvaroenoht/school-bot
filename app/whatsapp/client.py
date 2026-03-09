@@ -11,7 +11,6 @@ import requests
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-WA_MAX_LENGTH = 4000
 
 
 class WahaClient:
@@ -94,6 +93,27 @@ class WahaClient:
             logger.error(f"download_media failed for {message_id}: {e}")
             return None
 
+    def download_media_url(self, media_url: str) -> bytes | None:
+        """Download media directly from a WAHA media URL (payload.media.url).
+
+        WAHA serves media files at /api/files/<filename>. The URL in the
+        webhook payload may reference localhost or the container hostname,
+        so we extract just the path and prepend our configured base_url.
+        """
+        from urllib.parse import urlparse
+        try:
+            path = urlparse(media_url).path
+            url = f"{self.base_url}{path}"
+            logger.debug(f"download_media_url: {url}")
+            r = requests.get(url, headers=self.headers, timeout=30)
+            if r.status_code == 200:
+                return r.content
+            logger.warning(f"download_media_url got {r.status_code} for {url}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"download_media_url failed for {media_url}: {e}")
+            return None
+
     def get_group_participants(self, group_id: str) -> list[str]:
         """Get participant JIDs for a WhatsApp group."""
         url = f"{self.base_url}/api/{self.session}/groups"
@@ -134,22 +154,3 @@ class WahaClient:
         except requests.RequestException as e:
             logger.error(f"WA send_image failed to {chat_id}: {e}")
             return {}
-    def send_chunked(self, chat_id: str, text: str) -> None:
-        if len(text) <= WA_MAX_LENGTH:
-            self.send_text(chat_id, text)
-            return
-        chunks: list[str] = []
-        current = ""
-        for line in text.split("\n"):
-            if len(current) + len(line) + 1 <= WA_MAX_LENGTH:
-                current += line + "\n"
-            else:
-                chunks.append(current)
-                current = line + "\n"
-        if current:
-            chunks.append(current)
-        for i, chunk in enumerate(chunks, 1):
-            if len(chunks) > 1:
-                chunk = f"*Parte {i}/{len(chunks)}*\n{chunk}"
-            self.send_text(chat_id, chunk)
-            time.sleep(0.5)

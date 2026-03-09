@@ -141,6 +141,25 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
         asyncio.create_task(run_sync(classroom_id=classroom_id))
         return True
 
+    # ── resumen ────────────────────────────────────────────────────────────────
+    if cmd_lower.startswith("resumen"):
+        # Find the admin's parent record
+        parent = db.query(models.Parent).filter_by(
+            whatsapp_jid=chat_id.replace("@c.us", "@lid").split("@")[0]
+        ).first()
+        if not parent:
+            # Fallback: find any active parent
+            parent = db.query(models.Parent).filter_by(is_active=True).first()
+
+        if not parent or not parent.student_ids:
+            wa.send_text(chat_id, "❌ No hay estudiantes vinculados.")
+            return True
+
+        # Use shared handler (same as parent /resumen — text + PDF + S3)
+        from app.bot.webhook import _handle_parent_resumen
+        await _handle_parent_resumen(parent, chat_id, db)
+        return True
+
     return False   # not an admin command
 
 
@@ -152,7 +171,8 @@ _ADMIN_HELP = (
     "  `/disallow <id>` \u2014 desactivar un padre por ID\n\n"
     "*\U0001f504 Sincronizaci\u00f3n:*\n"
     "  `/sync` \u2014 sincronizar actividades de todos los salones\n"
-    "  `/sync <id>` \u2014 sincronizar un sal\u00f3n espec\u00edfico\n\n"
+    "  `/sync <id>` \u2014 sincronizar un sal\u00f3n espec\u00edfico\n"
+    "  `/resumen` \u2014 enviar resumen semanal a todos los grupos\n\n"
     "*\U0001f4b3 Actividades (fundraisers):*\n"
     "  `/fundraiser create <nombre>` \u2014 crear nueva actividad\n"
     "  `/fundraiser list` \u2014 listar todas las actividades\n"

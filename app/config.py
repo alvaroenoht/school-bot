@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     openai_api_key: str
-    openai_model: str = "gpt-4.1-nano"
+    openai_model: str = "gpt-4o-mini"
 
     # ── Waha (WhatsApp gateway) ───────────────────────────────────────────────
     waha_url: str = "http://waha:3000"
@@ -30,10 +30,11 @@ class Settings(BaseSettings):
     summary_time: str = "18:30"        # HH:MM
     reminder_time: str = "07:00"       # HH:MM  Mon-Fri
 
-    # ── AWS (Textract for receipt OCR) ──────────────────────────────────────
+    # ── AWS (Textract for receipt OCR + S3 for PDF reports) ─────────────────
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "us-east-1"
+    s3_bucket: str = "schoolbot-reports"
 
     class Config:
         env_file = ".env"

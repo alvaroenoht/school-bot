@@ -203,25 +203,35 @@ async def handle(
         db.add(parent)
         db.flush()
 
-        # Create one classroom + student record per child
+        # Check if these students already exist (second parent with same creds)
         classroom_info = []  # [(student_dict, classroom_id)]
         for s in students:
-            classroom = models.Classroom(
-                name=f"{s['name']} - {s['grade']}",
-            )
-            db.add(classroom)
-            db.flush()
+            existing_student = db.get(models.Student, s["id"])
+            if existing_student:
+                # Reuse existing Student + Classroom — don't touch parent_id or classroom_id
+                logger.info(
+                    f"  Reusing existing student {s['id']} / classroom {existing_student.classroom_id} "
+                    f"(second parent registration)"
+                )
+                classroom_info.append((s, existing_student.classroom_id))
+            else:
+                # First parent — create new Classroom + Student records
+                classroom = models.Classroom(
+                    name=f"{s['name']} - {s['grade']}",
+                )
+                db.add(classroom)
+                db.flush()
 
-            student_rec = models.Student(
-                id=s["id"],
-                name=s["name"],
-                grade=s["grade"],
-                classroom_id=classroom.id,
-                parent_id=parent.id,
-            )
-            db.merge(student_rec)
-            db.flush()
-            classroom_info.append((s, classroom.id))
+                student_rec = models.Student(
+                    id=s["id"],
+                    name=s["name"],
+                    grade=s["grade"],
+                    classroom_id=classroom.id,
+                    parent_id=parent.id,
+                )
+                db.add(student_rec)
+                db.flush()
+                classroom_info.append((s, classroom.id))
 
         # Mark invite code as used
         invite_obj = db.query(models.InviteCode).get(data["invite_code_id"])
@@ -245,12 +255,18 @@ async def handle(
             chat_id,
             f"\u2705 *\u00a1Registro completado, {parent.first_name}!*\n\n"
             f"\ud83d\udc64 *Estudiantes encontrados:*\n{student_lines}\n\n"
-            "Recibir\u00e1s el resumen cada *jueves a las 6pm* y un recordatorio "
-            "cada ma\u00f1ana de lunes a viernes. \ud83c\udf89\n\n"
             "\ud83d\udccc *\u00daltimo paso:* agr\u00e9game a tus grupos de WhatsApp "
             "y env\u00eda el comando correspondiente:\n"
             f"{vincular_lines}\n\n"
             "\ud83e\uddf9 Por seguridad, te recomendamos borrar el historial de este chat.",
+        )
+        # Disclaimer — not an official school/Seduca app
+        wa.send_text(
+            chat_id,
+            "\u26a0\ufe0f *Aviso importante:* Este asistente es un proyecto "
+            "*independiente*. *No es una aplicaci\u00f3n oficial* del colegio "
+            "ni de Seduca/GSEpty.\n\n"
+            "Para preguntas o soporte: *67815352*",
         )
 
     # ── verifying — login already running, ignore extra messages ──────────────

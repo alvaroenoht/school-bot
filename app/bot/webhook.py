@@ -39,12 +39,34 @@ def _is_group(chat_id: str) -> bool:
 
 
 def _is_mentioned(payload: dict, bot_phone: str) -> bool:
+    # 1. Standard mentionedIds field
     mentions = payload.get("mentionedIds") or []
-    return any(bot_phone in str(m) for m in mentions)
+    if any(bot_phone in str(m) for m in mentions):
+        return True
+
+    # 2. WAHA _data.mentionedJidList (webjs engine)
+    jid_list = payload.get("_data", {}).get("mentionedJidList") or []
+    if any(bot_phone in str(j) for j in jid_list):
+        return True
+
+    # 3. Fallback: body contains @<lid_number> — resolve to phone
+    import re
+    body = payload.get("body") or ""
+    at_ids = re.findall(r"@(\d{10,})", body)
+    if at_ids:
+        wa = WahaClient()
+        for lid_num in at_ids:
+            phone = wa.resolve_phone(f"{lid_num}@lid")
+            if phone == bot_phone:
+                return True
+
+    return False
 
 
 def _strip_mention(text: str, bot_phone: str) -> str:
-    return text.replace(f"@{bot_phone}", "").strip()
+    import re
+    # Remove @<digits> mentions (handles both @phone and @lid formats)
+    return re.sub(r"@\d{10,}", "", text).strip()
 
 
 def _is_pay_command(text: str) -> bool:
@@ -81,6 +103,8 @@ async def whatsapp_webhook(request: Request):
     message_id: str = payload.get("id", "")
     has_media: bool = payload.get("hasMedia", False)
     media_type: str = payload.get("type") or payload.get("_data", {}).get("type") or ""
+    if has_media:
+        logger.info("MEDIA_DEBUG type=%s media=%s", media_type, payload.get("media"))
 
     # raw_jid = sender's WhatsApp JID (participant in groups, "from" in DMs)
     raw_jid: str = payload.get("participant") if _is_group(chat_id) else chat_id
@@ -103,7 +127,17 @@ async def whatsapp_webhook(request: Request):
                 _handle_vincular(raw_jid, chat_id, raw_text.lstrip("/"), db, wa)
                 return {"status": "ok"}
 
-            # All other group messages require @mention
+            # All other group messages require @mention or quoting a bot message
+            _data = payload.get("_data", {})
+            quoted_fields = {k: v for k, v in _data.items() if "quot" in k.lower()}
+            logger.info(
+                "GROUP_DEBUG bot_phone=%s mentionedIds=%s quoted=%s body=%s",
+                settings.waha_bot_phone,
+                payload.get("mentionedIds"),
+                {k: (str(v)[:60] if not isinstance(v, (bool, int, type(None))) else v)
+                 for k, v in quoted_fields.items()} if quoted_fields else None,
+                raw_text[:80],
+            )
             if not _is_mentioned(payload, settings.waha_bot_phone):
                 return {"status": "ignored"}
 
@@ -176,11 +210,27 @@ async def whatsapp_webhook(request: Request):
             )
             return {"status": "ok"}
 
-        # 4. Registered active parent \u2014 "pay/pagar" or Q&A
+        # 4. Registered active parent \u2014 commands, "pay/pagar", or Q&A
         parent = db.query(models.Parent).filter_by(
             whatsapp_jid=raw_jid, is_active=True
         ).first()
         if parent:
+            # \u2500\u2500 Parent slash commands (before LLM routing) \u2500\u2500
+            cmd = raw_text.strip().lstrip("/").lower()
+            if cmd in ("help", "ayuda"):
+                wa.send_text(chat_id, _PARENT_HELP)
+                return {"status": "ok"}
+            if cmd.startswith("resumen"):
+                await _handle_parent_resumen(parent, chat_id, db)
+                return {"status": "ok"}
+            if cmd.startswith("fundraiser") or cmd.startswith("actividad"):
+                sub = cmd.split(None, 1)[1] if " " in cmd else ""
+                if sub.startswith("list") or sub.startswith("lista"):
+                    await fundraiser_admin.handle_command(from_phone, chat_id, raw_text, db)
+                else:
+                    wa.send_text(chat_id, "\u274c Ese comando de actividades es *solo para administradores*.")
+                return {"status": "ok"}
+
             if _is_pay_command(raw_text):
                 await payment_flow.start_from_command(raw_jid, chat_id, raw_text, db, parent)
             else:
@@ -253,9 +303,10 @@ def _handle_vincular(raw_jid: str, chat_id: str, text: str, db, wa: WahaClient):
     if not parent:
         return
 
-    # Check classroom belongs to one of the parent's students
-    student = db.query(models.Student).filter_by(
-        classroom_id=classroom_id, parent_id=parent.id
+    # Check classroom belongs to one of the parent's students (supports multiple parents)
+    student = db.query(models.Student).filter(
+        models.Student.classroom_id == classroom_id,
+        models.Student.id.in_(parent.student_ids or []),
     ).first()
     if not student:
         wa.send_text(chat_id, f"\u274c El sal\u00f3n `{classroom_id}` no corresponde a tu registro.")
@@ -267,9 +318,15 @@ def _handle_vincular(raw_jid: str, chat_id: str, text: str, db, wa: WahaClient):
 
     wa.send_text(
         chat_id,
-        f"\u2705 Grupo vinculado al sal\u00f3n *{classroom.name}*.\n\n"
-        "Cualquier miembro puede mencionarme con *@Asistente Seduca* "
-        "para consultar actividades. \U0001f4da",
+        f"\u2705 *\u00a1Grupo vinculado al sal\u00f3n {classroom.name}!*\n\n"
+        "\U0001f4da *\u00bfQu\u00e9 puedo hacer?*\n"
+        "  \u2022 Responder preguntas sobre tareas y actividades\n"
+        "  \u2022 Enviar res\u00famenes semanales autom\u00e1ticos\n"
+        "  \u2022 Procesar pagos de actividades escolares\n\n"
+        "Menci\u00f3name con *@Asistente Seduca* para consultarme.\n\n"
+        "\u26a0\ufe0f *Aviso:* Este asistente es un proyecto *independiente*. "
+        "*No es una aplicaci\u00f3n oficial* del colegio ni de Seduca/GSEpty.\n"
+        "Preguntas o soporte: *67815352*",
     )
 
 
@@ -288,3 +345,86 @@ def _check_group_membership(raw_jid: str, db, wa: WahaClient) -> str | None:
         except Exception as e:
             logger.warning(f"Could not check participants for group {classroom.whatsapp_group_id}: {e}")
     return None
+
+
+async def _handle_parent_resumen(parent: models.Parent, chat_id: str, db) -> None:
+    """Send weekly text summary + PDF link to the calling parent."""
+    from datetime import datetime, timedelta
+    from app.utils.summary_formatter import generate_weekly_summary, generate_weekly_data
+    from app.utils.pdf_generator import create_weekly_pdf
+    import pytz
+    import tempfile
+    import os
+
+    tz = pytz.timezone("America/Panama")
+    today = datetime.now(tz).date()
+    # Next Monday \u2192 Friday
+    days_until_monday = (7 - today.weekday()) % 7
+    start = today + timedelta(days=days_until_monday if days_until_monday else 7)
+    end = start + timedelta(days=4)
+    week_dates = [start + timedelta(days=i) for i in range(5)]
+
+    student_ids = parent.student_ids or []
+    if not student_ids:
+        wa = WahaClient()
+        wa.send_text(chat_id, "\u274c No hay estudiantes vinculados.")
+        return
+
+    wa_client = WahaClient()
+    raw_conn = db.connection().connection.dbapi_connection
+    any_summary_sent = False
+
+    for sid in student_ids:
+        # Text summary
+        message = generate_weekly_summary(raw_conn, sid, start, end)
+        if message:
+            wa_client.send_text(chat_id, message)
+            any_summary_sent = True
+
+        # PDF generation + S3 upload
+        try:
+            data_by_day = generate_weekly_data(raw_conn, sid, start, end)
+            has_data = any(
+                data_by_day.get(day, {}).get("sumativas") or data_by_day.get(day, {}).get("materials")
+                for day in data_by_day
+            )
+            if not has_data:
+                continue
+
+            student = db.get(models.Student, sid)
+            student_label = student.name if student else f"estudiante_{sid}"
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                filename = f"resumen_{student_label}_{start.strftime('%d%m')}.pdf"
+                pdf_path = os.path.join(tmpdir, filename)
+                create_weekly_pdf(data_by_day, pdf_path, week_dates)
+
+                # Upload to S3 and send shortened link
+                from app.utils.s3_upload import upload_file_to_s3, generate_presigned_url
+                from app.utils.helpers import shorten_url
+                s3_key = f"resumenes/{start.strftime('%Y-%m-%d')}/{filename}"
+                upload_file_to_s3(pdf_path, s3_key)
+                presigned = generate_presigned_url(s3_key)
+                short_url = shorten_url(presigned)
+                wa_client.send_text(
+                    chat_id,
+                    f"\U0001f4c4 *PDF de {student_label}:*\n{short_url}",
+                )
+        except Exception as e:
+            logger.error(f"PDF generation/upload failed for student {sid}: {e}")
+
+    if not any_summary_sent:
+        wa_client.send_text(
+            chat_id,
+            f"\U0001f4ed No hay actividades para la semana del {start.strftime('%d/%m')}.",
+        )
+
+
+_PARENT_HELP = (
+    "\U0001f4cb *Comandos disponibles:*\n\n"
+    "  `/resumen` \u2014 recibir resumen semanal + PDF\n"
+    "  `/pagar <actividad>` \u2014 pagar una actividad escolar\n"
+    "  `/fundraiser list` \u2014 ver actividades activas\n"
+    "  `/help` \u2014 mostrar este mensaje\n\n"
+    "\U0001f4ac O simplemente escr\u00edbeme tu pregunta sobre tareas y actividades."
+)
