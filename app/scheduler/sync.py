@@ -9,7 +9,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 
-from app.api.gpt_analyzer import analyze_materials
+from app.api.gpt_analyzer import analyze_materials, analyze_change
 from app.api.seduca_client import SeducaClient
 from app.db.database import SessionLocal
 from app.db import models
@@ -223,8 +223,15 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db) ->
 
     now = datetime.utcnow().isoformat()
     change_type = None
+    old_data = None
 
     if existing:
+        old_data = {
+            "title":     existing.title,
+            "date":      existing.date,
+            "summary":   existing.summary,
+            "materials": existing.materials,
+        }
         existing.title       = title
         existing.date        = date
         existing.created_at  = created_at
@@ -256,9 +263,13 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db) ->
         logger.debug(f"  Inserted new assignment {asig_id}")
 
     return {
-        "type": change_type,
-        "title": title,
+        "type":         change_type,
+        "title":        title,
         "subject_name": materia_name or f"Materia {subject_id}",
+        "summary":      summary,
+        "materials":    materials,
+        "date":         date,
+        "old":          old_data,
     }
 
 
@@ -277,10 +288,21 @@ def _send_change_notifications(
         if not classroom or not classroom.whatsapp_group_id:
             continue
 
-        lines = ["📝 *Cambios detectados en actividades:*\n"]
+        lines = []
         for c in changes:
-            icon = "🆕" if c["type"] == "new" else "✏️"
-            suffix = " _(actualizado)_" if c["type"] == "updated" else ""
-            lines.append(f"{icon} *{c['subject_name']}*: {c['title']}{suffix}")
+            try:
+                result = analyze_change(c)
+            except Exception as e:
+                logger.error(f"  analyze_change failed for '{c.get('title')}': {e}")
+                result = {"worth_notifying": True, "message": f"*{c['subject_name']}*: {c['title']}"}
 
-        wa.send_text(classroom.whatsapp_group_id, "\n".join(lines))
+            if not result["worth_notifying"]:
+                logger.info(f"  Skipping notification for '{c['title']}' (not worth notifying)")
+                continue
+
+            icon = "🆕" if c["type"] == "new" else "✏️"
+            lines.append(f"{icon} {result['message']}")
+
+        if lines:
+            header = "📝 *Cambios detectados en asignaciones:*\n"
+            wa.send_text(classroom.whatsapp_group_id, header + "\n".join(lines))
