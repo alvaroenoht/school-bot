@@ -3,12 +3,17 @@ Admin commands — only accepted from the admin's personal WhatsApp DM.
 All commands use the / prefix.
 
 Commands:
-    /help                    show all available commands
-    /gencode [label]         generate a one-time invite code
-    /list                    show all registered parents and pending codes
-    /disallow <id>           deactivate a parent by ID
-    /sync [classroom_id]     trigger assignment sync
+    /help                              show all available commands
+    /gencode [label]                   generate a one-time invite code
+    /list                              show registered parents and active codes
+    /disallow <id>                     deactivate a parent by ID
+    /sync [classroom_id]               trigger assignment sync
+    /resumen                           send weekly PDF summary to group
+    /status [msg|clear]                view/set maintenance message
     /fundraiser create|list|close|delete|report   manage fundraisers
+    /form create|list|open|close|archive|delete   manage forms
+    /form results|report|ai|questions  form reporting
+    /form addq|editq|delq|readers|fill form editing
 """
 import logging
 import secrets
@@ -40,10 +45,62 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
         wa.send_text(chat_id, _ADMIN_HELP)
         return True
 
+    # ── /status ───────────────────────────────────────────────────────────────────
+    if cmd_lower.startswith("status") or cmd_lower.startswith("estado"):
+        parts = text.strip().split(None, 1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        status = db.query(models.BotStatus).first()
+
+        if not arg or arg.lower() in ("show", "ver"):
+            lines = ["📊 *Estado del bot:*\n"]
+            if status and status.last_sync_at:
+                import pytz
+                from app.config import get_settings
+                tz = pytz.timezone(get_settings().timezone)
+                local_dt = status.last_sync_at.replace(tzinfo=pytz.utc).astimezone(tz)
+                lines.append(f"🔄 Última sincronización: *{local_dt.strftime('%d/%m/%Y %H:%M')}*")
+            else:
+                lines.append("🔄 Última sincronización: _ninguna registrada_")
+            if status and status.maintenance_msg:
+                lines.append(f"\n🟡 Mensaje activo: _{status.maintenance_msg}_\n`/status clear` para desactivar")
+            else:
+                lines.append("\n✅ Sin mensaje de estado activo.")
+            wa.send_text(chat_id, "\n".join(lines))
+            return True
+
+        if arg.lower() in ("clear", "limpiar", "off"):
+            if status:
+                status.maintenance_msg = None
+                status.updated_at = datetime.utcnow()
+                db.commit()
+            wa.send_text(chat_id, "✅ Mensaje de mantenimiento eliminado.")
+            return True
+
+        # Set maintenance message
+        if not status:
+            status = models.BotStatus(maintenance_msg=arg)
+            db.add(status)
+        else:
+            status.maintenance_msg = arg
+            status.updated_at = datetime.utcnow()
+        db.commit()
+        wa.send_text(
+            chat_id,
+            f"🟡 *Mensaje de estado activado:*\n\n_{arg}_\n\n"
+            "Se mostrará a todos los que envíen un mensaje al bot.\n"
+            "`/status clear` para desactivar.",
+        )
+        return True
+
     # ── fundraiser ────────────────────────────────────────────────────────────────
     if cmd_lower.startswith("fundraiser") or cmd_lower.startswith("actividad"):
         from app.bot import fundraiser_admin
-        return await fundraiser_admin.handle_command(admin_phone, chat_id, text, db)
+        return await fundraiser_admin.handle_command(chat_id, chat_id, text, db)
+
+    # ── form ─────────────────────────────────────────────────────────────────────
+    if cmd_lower.startswith("form") or cmd_lower.startswith("formulario"):
+        from app.bot import form_admin
+        return await form_admin.handle_command(chat_id, chat_id, text, db)
 
     # ── gencode ────────────────────────────────────────────────────────────────
     if cmd_lower.startswith("gencode"):
@@ -141,6 +198,26 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
         asyncio.create_task(run_sync(classroom_id=classroom_id))
         return True
 
+    # ── profile ────────────────────────────────────────────────────────────────
+    if cmd_lower.startswith("profile"):
+        parts = text.strip().split(None, 2)
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        value = parts[2].strip() if len(parts) > 2 else ""
+
+        if not sub or not value:
+            wa.send_text(chat_id, "Uso:\n  `/profile name <nombre>`\n  `/profile about <texto>`")
+            return True
+
+        if sub == "name":
+            ok = wa.set_profile_name(value)
+            wa.send_text(chat_id, f"✅ Nombre actualizado a *{value}*." if ok else "❌ Error al actualizar el nombre.")
+        elif sub == "about":
+            ok = wa.set_profile_about(value)
+            wa.send_text(chat_id, f"✅ About actualizado." if ok else "❌ Error al actualizar el about.")
+        else:
+            wa.send_text(chat_id, "❌ Subcomando desconocido. Usa `name` o `about`.")
+        return True
+
     # ── resumen ────────────────────────────────────────────────────────────────
     if cmd_lower.startswith("resumen"):
         # Find the admin's parent record
@@ -164,23 +241,47 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
 
 
 _ADMIN_HELP = (
-    "\U0001f4cb *Comandos disponibles:*\n\n"
-    "*\U0001f464 Padres y c\u00f3digos:*\n"
-    "  `/gencode [nombre]` \u2014 generar c\u00f3digo de invitaci\u00f3n\n"
-    "  `/list` \u2014 ver padres registrados y c\u00f3digos activos\n"
-    "  `/disallow <id>` \u2014 desactivar un padre por ID\n\n"
-    "*\U0001f504 Sincronizaci\u00f3n:*\n"
-    "  `/sync` \u2014 sincronizar actividades de todos los salones\n"
-    "  `/sync <id>` \u2014 sincronizar un sal\u00f3n espec\u00edfico\n"
-    "  `/resumen` \u2014 enviar resumen semanal a todos los grupos\n\n"
-    "*\U0001f4b3 Actividades (fundraisers):*\n"
-    "  `/fundraiser create <nombre>` \u2014 crear nueva actividad\n"
-    "  `/fundraiser list` \u2014 listar todas las actividades\n"
-    "  `/fundraiser close <id>` \u2014 cerrar actividad\n"
-    "  `/fundraiser delete <id>` \u2014 eliminar (sin pagos)\n"
-    "  `/fundraiser report <id>` \u2014 generar reporte PDF\n\n"
-    "*\u2139\ufe0f Otros:*\n"
-    "  `/help` \u2014 mostrar este mensaje"
+    "📋 *Comandos disponibles:*\n\n"
+    "*👤 Padres y códigos:*\n"
+    "  `/gencode [nombre]` — generar código de invitación\n"
+    "  `/list` — ver padres registrados y códigos activos\n"
+    "  `/disallow <id>` — desactivar un padre por ID\n\n"
+    "*🔄 Sincronización y resúmenes:*\n"
+    "  `/sync` — sincronizar actividades de todos los salones\n"
+    "  `/sync <id>` — sincronizar un salón específico\n"
+    "  `/resumen` — enviar resumen semanal (PDF) al grupo\n\n"
+    "*💳 Actividades / Fundraisers:*\n"
+    "  `/fundraiser create <nombre>` — crear nueva actividad\n"
+    "  `/fundraiser list` — listar todas las actividades\n"
+    "  `/fundraiser close <id>` — cerrar actividad\n"
+    "  `/fundraiser delete <id>` — eliminar (sin pagos registrados)\n"
+    "  `/fundraiser report <id>` — reporte de pagos en PDF\n"
+    "  `/fundraiser subscribe <id> <teléfono>` — suscribir número a notificaciones de pagos\n"
+    "  `/fundraiser unsubscribe <id> <teléfono>` — quitar suscripción\n\n"
+    "*📝 Formularios:*\n"
+    "  `/form create` — crear nuevo formulario (flujo guiado)\n"
+    "  `/form list` — listar formularios\n"
+    "  `/form open <id>` — abrir formulario (envía invitación)\n"
+    "  `/form close <id>` — cerrar formulario\n"
+    "  `/form archive <id>` — archivar formulario\n"
+    "  `/form delete <id>` — eliminar formulario\n"
+    "  `/form results <id>` — reporte detallado por pregunta\n"
+    "  `/form report <id>` — resumen compacto + CSV\n"
+    "  `/form ai <id> <pregunta>` — análisis IA de respuestas\n"
+    "  `/form questions <id>` — ver preguntas del formulario\n"
+    "  `/form addq <id>` — agregar pregunta\n"
+    "  `/form editq <id> <#>` — editar una pregunta\n"
+    "  `/form delq <id> <#>` — eliminar una pregunta\n"
+    "  `/form readers <id>` — ver quién ha respondido\n"
+    "  `/form fill <id>` — responder formulario tú mismo\n\n"
+    "*⚙️ Perfil del bot:*\n"
+    "  `/profile name <nombre>` — cambiar nombre del bot\n"
+    "  `/profile about <texto>` — cambiar mensaje \"about\"\n\n"
+    "*ℹ️ Sistema:*\n"
+    "  `/status` — ver última sincronización y mensaje activo\n"
+    "  `/status <mensaje>` — activar mensaje de mantenimiento\n"
+    "  `/status clear` — desactivar mensaje\n"
+    "  `/help` — mostrar este mensaje"
 )
 
 

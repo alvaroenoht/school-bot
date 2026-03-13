@@ -167,8 +167,29 @@ async def run_sync(classroom_id: int | None = None):
 
             logger.info(f"Sync complete for parent {parent.id}")
 
-        # ── Send change notifications to WhatsApp groups ──────────────────────
-        _send_change_notifications(changes_by_student, db)
+        # ── Change notifications disabled — admin shares updates manually ──────
+        # _send_change_notifications(changes_by_student, db)
+
+        # ── Stamp last sync time ───────────────────────────────────────────────
+        status = db.query(models.BotStatus).first()
+        now = datetime.utcnow()
+        if status:
+            status.last_sync_at = now
+            status.updated_at = now
+        else:
+            db.add(models.BotStatus(last_sync_at=now))
+        db.commit()
+
+        # ── Update profile about with last sync timestamp ──────────────────────
+        try:
+            from app.config import get_settings
+            import pytz
+            tz = pytz.timezone(get_settings().timezone)
+            local_dt = now.replace(tzinfo=pytz.utc).astimezone(tz)
+            wa = WahaClient()
+            wa.set_profile_about(f"Última sincronización con la plataforma el {local_dt.strftime('%d/%m/%Y a las %H:%M')}")
+        except Exception as e:
+            logger.warning(f"Could not update profile about after sync: {e}")
 
     finally:
         db.close()

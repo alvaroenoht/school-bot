@@ -78,19 +78,44 @@ async def handle(
             source_group_id=data.get("source_group_id"),
         )
         db.add(contact)
+        db.flush()
+
+        # Create KnownContactGroup row for the source group
+        sgid = data.get("source_group_id")
+        if sgid:
+            classroom = db.query(models.Classroom).filter_by(
+                whatsapp_group_id=sgid, is_active=True
+            ).first()
+            if classroom:
+                db.add(models.KnownContactGroup(
+                    contact_jid=raw_jid,
+                    classroom_id=classroom.id,
+                    active=True,
+                    synced_at=datetime.utcnow(),
+                ))
 
         pending = data.get("pending_command")
         db.delete(session)
         db.commit()
 
+        # Resume pending form code
+        if pending and pending.upper().startswith("FORM-"):
+            from app.bot import form_flow
+            await form_flow.start_from_code(raw_jid, chat_id, pending, db)
+            return
+
         wa.send_text(
             chat_id,
-            f"\u2705 \u00a1Listo, *{data['name']}*! Quedaste registrado/a.\n\n"
-            "Ahora puedes usar el comando `/pagar <nombre>` "
-            "para pagar actividades escolares.",
+            f"✅ ¡Listo, *{data['name']}*!\n\n"
+            "📌 Para consultas sobre tareas y actividades, por favor *pregunta en el grupo* "
+            "y mencioname con @bot — así todos se benefician de la respuesta. "
+            "Este servicio es mantenido por un solo padre de familia. 🙏\n\n"
+            "En este chat solo puedo ayudarte con:\n"
+            "  • `/pagar <actividad>` — pagar una actividad escolar\n"
+            "  • `FORM-XXXXX` — responder un formulario del colegio",
         )
 
-        # Resume pending command if any (e.g. "pay Kermesse")
+        # Resume pending pay command
         if pending:
             from app.bot import payment_flow
             await payment_flow.start_from_command(

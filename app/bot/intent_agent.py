@@ -148,6 +148,7 @@ Reglas estrictas:
 - NUNCA des respuestas a tareas escolares ni ayudes a hacer trampa
 - Si te piden ayuda con una tarea, explica los pasos o conceptos pero no des la respuesta final
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
+- Las actividades, materiales y cualquier dato son ESTRICTAMENTE por fecha: SOLO reporta información que aparezca listada bajo la fecha específica consultada. Nunca atribuyas datos de otro día aunque estén en el contexto
 - Usa herramientas SOLO para pagos y comprobantes
 - NUNCA termines tu respuesta con una pregunta — responde de forma concisa y directa, sin preguntar "¿necesitas algo más?" ni similares
 - SIEMPRE incluye el link (🔗) de las actividades que menciones en tu respuesta, si está disponible en los datos
@@ -198,10 +199,20 @@ def _build_sender_context(sender, is_admin: bool, db: Session) -> str:
             f"Admin: {'sí' if is_admin else 'no'}"
         )
     elif isinstance(sender, models.KnownContact):
+        active_kcgs = (
+            db.query(models.KnownContactGroup)
+            .filter_by(contact_jid=sender.jid, active=True)
+            .all()
+        )
+        if active_kcgs:
+            names = [kcg.classroom.name for kcg in active_kcgs if kcg.classroom]
+            classroom_line = "Salones vinculados: " + ", ".join(names)
+        else:
+            classroom_line = "Sin salón vinculado"
         return (
-            f"Usuario: {sender.name} (contacto conocido, no registrado)\n"
+            f"Usuario: {sender.name} (contacto del grupo, no registrado)\n"
             f"Hijo/a: {sender.child_name}\n"
-            "Puede: pagar actividades. No puede: consultar tareas (no tiene credenciales del portal)."
+            f"{classroom_line}"
         )
     return "Usuario: desconocido"
 
@@ -271,7 +282,48 @@ def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
     In groups, shows only the classroom-scoped student (no names).
     """
     if not isinstance(sender, models.Parent):
-        return "Actividades escolares: no disponible (usuario no registrado)."
+        if not isinstance(sender, models.KnownContact):
+            return "Actividades escolares: no disponible (usuario no registrado)."
+
+        active_kcgs = (
+            db.query(models.KnownContactGroup)
+            .filter_by(contact_jid=sender.jid, active=True)
+            .all()
+        )
+        if not active_kcgs:
+            return "Actividades escolares: no disponible (sin salón vinculado activo)."
+
+        today = datetime.now(PANAMA_TZ).date()
+        this_monday = today - timedelta(days=today.weekday())
+        next_friday = this_monday + timedelta(days=11)
+        subjects = {s.materia_id: (s.name, s.icon or "📘") for s in db.query(models.Subject).all()}
+
+        all_lines = []
+        for kcg in active_kcgs:
+            classroom = kcg.classroom
+            if not classroom:
+                continue
+            student_ids = [s.id for s in db.query(models.Student).filter_by(classroom_id=classroom.id).all()]
+            if not student_ids:
+                continue
+            assignments = (
+                db.query(models.Assignment)
+                .filter(
+                    models.Assignment.student_id.in_(student_ids),
+                    models.Assignment.date >= this_monday.isoformat(),
+                    models.Assignment.date <= next_friday.isoformat(),
+                )
+                .order_by(models.Assignment.date)
+                .all()
+            )
+            if assignments:
+                section = [f"DATOS DE ACTIVIDADES — {classroom.name} ({this_monday.strftime('%d/%m')} al {next_friday.strftime('%d/%m')}):"]
+                _append_assignment_lines(assignments, subjects, section)
+                all_lines.extend(section)
+
+        if not all_lines:
+            return "Actividades escolares: no hay actividades registradas para esta semana ni la próxima."
+        return "\n".join(all_lines)
 
     all_ids = sender.student_ids or []
     if not all_ids:

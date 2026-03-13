@@ -115,22 +115,45 @@ class WahaClient:
             return None
 
     def get_group_participants(self, group_id: str) -> list[str]:
-        """Get participant JIDs for a WhatsApp group."""
-        url = f"{self.base_url}/api/{self.session}/groups"
+        """Get participant JIDs for a WhatsApp group.
+
+        Returns serialized JIDs (e.g. '507XXXXXXXX@c.us') from the dedicated
+        participants endpoint. Callers should resolve sender @lid JIDs to phone
+        numbers before comparing — use resolve_phone() for that.
+        """
+        url = f"{self.base_url}/api/{self.session}/groups/{group_id}/participants"
         try:
             r = requests.get(url, headers=self.headers, timeout=15)
             if r.status_code == 200:
-                groups = r.json()
-                for g in groups:
-                    gid = g.get("id", "")
-                    if gid == group_id:
-                        return [
-                            p.get("id", "") for p in g.get("participants", [])
-                        ]
+                participants = r.json()
+                return [
+                    p.get("id", {}).get("_serialized", "")
+                    for p in participants
+                    if isinstance(p.get("id"), dict)
+                ]
+            logger.warning(f"get_group_participants got {r.status_code} for {group_id}")
             return []
         except requests.RequestException as e:
             logger.error(f"get_group_participants failed for {group_id}: {e}")
             return []
+
+    def set_profile_name(self, name: str) -> bool:
+        url = f"{self.base_url}/api/{self.session}/profile/name"
+        try:
+            r = requests.put(url, json={"name": name}, headers=self.headers, timeout=10)
+            return r.status_code == 200
+        except requests.RequestException as e:
+            logger.error(f"set_profile_name failed: {e}")
+            return False
+
+    def set_profile_about(self, text: str) -> bool:
+        url = f"{self.base_url}/api/{self.session}/profile/status"
+        try:
+            r = requests.put(url, json={"status": text}, headers=self.headers, timeout=10)
+            return r.status_code == 200
+        except requests.RequestException as e:
+            logger.error(f"set_profile_about failed: {e}")
+            return False
 
     def send_image(self, chat_id: str, image_data: bytes, caption: str = "") -> dict:
         """Send an image to a chat."""

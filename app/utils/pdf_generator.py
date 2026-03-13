@@ -23,7 +23,7 @@ class Checkbox(Flowable):
         self.canv.setLineWidth(0.5)
         self.canv.rect(0, 0, self.size, self.size)
 
-def create_weekly_pdf(data_by_day, output_path, week_dates):
+def create_weekly_pdf(data_by_day, output_path, week_dates, last_sync_at=None):
     doc = SimpleDocTemplate(output_path, pagesize=landscape(letter), leftMargin=22, rightMargin=22, topMargin=22, bottomMargin=22)
     elements = []
     styles = getSampleStyleSheet()
@@ -32,7 +32,6 @@ def create_weekly_pdf(data_by_day, output_path, week_dates):
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName='LexendDeca', fontSize=20, textColor=colors.black, alignment=1)
     header_style = ParagraphStyle('Header', parent=styles['Heading2'], fontName='LexendDeca', fontSize=14, textColor=colors.white, alignment=1)
     cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontName='LexendDeca', fontSize=9, textColor=colors.black, leading=9)
-    uniform_style = ParagraphStyle('Uniform', parent=styles['Normal'], fontName='LexendDeca', fontSize=9, textColor=colors.black)
 
     # Create title
     first_day = week_dates[0].strftime("%d/%m")
@@ -60,15 +59,6 @@ def create_weekly_pdf(data_by_day, output_path, week_dates):
     sumativas_row = []
     spacer_row = [Paragraph("<br/>", cell_style) for _ in headers]
     materials_row = []
-    uniform_row = []
-
-    UNIFORMS = {
-        "Lunes": "Camisa blanca y pantalon gris",
-        "Martes": "Polo blanco",
-        "Miercoles": "Traje tipico",
-        "Jueves": "Polo blanco",
-        "Viernes": "Educacion Fisica"
-    }
 
     # Calculate column widths
     usable_width = landscape(letter)[0] - doc.leftMargin - doc.rightMargin
@@ -105,10 +95,9 @@ def create_weekly_pdf(data_by_day, output_path, week_dates):
         else:
             materials_row.append(Paragraph("-", cell_style))
 
-        uniform_row.append(Paragraph(UNIFORMS.get(day, "-"), uniform_style))
 
     # Create main table
-    table_data = [headers, sumativas_row, spacer_row, materials_row, uniform_row]
+    table_data = [headers, sumativas_row, spacer_row, materials_row]
     t = Table(table_data, colWidths=[main_col_width] * 5)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (0, 0), colors.HexColor(header_colors[0])),
@@ -132,4 +121,10 @@ def create_weekly_pdf(data_by_day, output_path, week_dates):
     ]))
 
     elements.append(t)
+
+    if last_sync_at:
+        sync_style = ParagraphStyle('Sync', parent=styles['Normal'], fontName='LexendDeca', fontSize=7, textColor=colors.grey, alignment=1)
+        elements.append(Spacer(1, 6))
+        elements.append(Paragraph(f"Última sincronización con la plataforma: {last_sync_at}", sync_style))
+
     doc.build(elements)

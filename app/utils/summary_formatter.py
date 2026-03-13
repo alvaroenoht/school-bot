@@ -25,6 +25,40 @@ def translate_date(date_obj):
     #return f"{day_name} {date_obj.strftime('%d')}"
     return f"{day_name} {date_obj.strftime('%d')} de {month_name}"
 
+_TYPE_ABBREV = {
+    "Actividades Evaluativas": "AE",
+    "Ejercicios": "EJ",
+    "Trimestral": "TR",
+}
+
+
+def _sumativa_types_for_student(cursor, student_id) -> tuple[set, str]:
+    """Return (type_set, section_label) for this student's level.
+
+    Rules:
+      - Starts with PK or K                        → Preescolar (materials only)
+      - Single digit 1-6 followed by a letter      → Primaria
+      - Anything else (7+, named classrooms, etc.) → Secundaria
+    """
+    import re as _re
+    cursor.execute("""
+        SELECT c.name FROM students s
+        JOIN classrooms c ON c.id = s.classroom_id
+        WHERE s.id = %s
+    """, (student_id,))
+    row = cursor.fetchone()
+    classroom = (row[0] if row else "").strip()
+
+    if _re.match(r"^(PK|K)", classroom, _re.IGNORECASE):
+        return set(), "🎨 Actividades Preescolar 🎨"
+
+    m = _re.match(r"^([1-9]\d*)([A-Za-z])", classroom)
+    if m and int(m.group(1)) <= 6:
+        return {"Sumativas (Primaria)"}, "💯 Sumativas 💯"
+
+    return {"Trimestral", "Actividades Evaluativas", "Ejercicios"}, "📝 Evaluaciones y Ejercicios 📝"
+
+
 def generate_weekly_summary(conn, student_id, start, end):
     cursor = conn.cursor()
     # Get student's name
@@ -36,21 +70,19 @@ def generate_weekly_summary(conn, student_id, start, end):
     month_span = months_es[end.strftime('%B')]
     week_range = f"📆  {start.strftime('%d')} al {end.strftime('%d')} de {month_span} {end.strftime('%Y')}"
 
+    sumativa_types, sumativa_label = _sumativa_types_for_student(cursor, student_id)
+
     # Fetch all subjects and emojis
     cursor.execute("SELECT materia_id, name, icon FROM subjects")
     subject_map = {row[0]: (row[2], row[1]) for row in cursor.fetchall()}
 
     # Fetch all assignments for the student in the range
-    #print(start.isoformat())
-    #print(end.isoformat())
-
     cursor.execute('''
         SELECT title, subject_id, type, date, created_at, materials, summary, short_url
         FROM assignments
         WHERE student_id = %s AND date BETWEEN %s AND %s
         ORDER BY date
     ''', (student_id, start.isoformat(), end.isoformat()))
-
     sumativas_by_day = defaultdict(list)
     materiales_by_day = defaultdict(list)
 
@@ -64,16 +96,17 @@ def generate_weekly_summary(conn, student_id, start, end):
         title = title.strip()
         link_text = f"{short_url}" if short_url else ""
 
-        if "Sumativa" in type_:
+        if type_ in sumativa_types:
             bag = "🎒" if materials else ""
-            sumativas_by_day[day_str].append(f"► {emoji} {subject_name}\n> {title}: {summary} {bag} {link_text}")
+            abbrev = f" [{_TYPE_ABBREV[type_]}]" if type_ in _TYPE_ABBREV else ""
+            sumativas_by_day[day_str].append(f"► {emoji} {subject_name}\n> {title}{abbrev}: {summary} {bag} {link_text}")
         if materials:
             materiales_by_day[day_str].append(f"{materials}. _- {subject_name}_ {link_text}")
 
     lines = [f"{week_range}\n"]
 
     if sumativas_by_day:
-        lines.append("💯 *S U M A T I V A S* 💯")
+        lines.append(f"*{sumativa_label}*")
         for day, items in sumativas_by_day.items():
             lines.append(f"*{day}*")
             for item in items:
@@ -92,6 +125,8 @@ def generate_weekly_summary(conn, student_id, start, end):
 
 def generate_weekly_data(conn, student_id, start, end):
     cursor = conn.cursor()
+
+    sumativa_types, _ = _sumativa_types_for_student(cursor, student_id)
 
     # Fetch all subjects and emojis
     cursor.execute("SELECT materia_id, name FROM subjects")
@@ -120,10 +155,11 @@ def generate_weekly_data(conn, student_id, start, end):
 
         subject_name = subject_map.get(subject_id, str(subject_id))
 
-        if "Sumativa" in type_:
+        if type_ in sumativa_types:
+            abbrev = f" [{_TYPE_ABBREV[type_]}]" if type_ in _TYPE_ABBREV else ""
             data_by_day[day_name]['sumativas'].append({
                 'subject': subject_name,
-                'title': title,
+                'title': f"{title}{abbrev}",
                 'summary': summary
             })
 

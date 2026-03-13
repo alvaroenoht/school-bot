@@ -26,10 +26,23 @@ logger = logging.getLogger(__name__)
 wa = WahaClient()
 
 
-async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session) -> bool:
+def _check_fund_access(fund: models.Fundraiser, caller_parent: models.Parent | None) -> bool:
+    """Super admin (caller_parent=None) has unrestricted access. Others must own the fundraiser."""
+    if caller_parent is None:
+        return True
+    return fund.created_by_jid == caller_parent.whatsapp_jid
+
+
+async def handle_command(
+    caller_jid: str,
+    chat_id: str,
+    text: str,
+    db: Session,
+    caller_parent: models.Parent | None = None,
+) -> bool:
     """Handle all fundraiser admin commands.  Returns True if handled."""
     parts = text.strip().lstrip("/").split(None, 2)
-    # parts[0] = "fundraiser", parts[1] = sub-command, parts[2] = argument (optional)
+    # parts[0] = "fundraiser"/"actividad", parts[1] = sub-command, parts[2] = argument (optional)
     if len(parts) < 2:
         wa.send_text(chat_id, _HELP)
         return True
@@ -56,6 +69,20 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
             )
             return True
 
+        session_data: dict = {"name": name, "creator_jid": chat_id}
+        if caller_parent:
+            allowed_ids = [
+                s.classroom_id
+                for s in db.query(models.Student).filter(
+                    models.Student.id.in_(caller_parent.student_ids or [])
+                ).all()
+                if s.classroom_id
+            ]
+            if not allowed_ids:
+                wa.send_text(chat_id, "❌ No tienes salones vinculados para crear una actividad.")
+                return True
+            session_data["allowed_classroom_ids"] = allowed_ids
+
         # Start conversational flow
         existing = db.query(models.ConversationSession).filter_by(chat_jid=chat_id).first()
         if existing:
@@ -65,31 +92,34 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
             chat_jid=chat_id,
             flow="fundraiser_create",
             step="awaiting_account",
-            data={"name": name},
+            data=session_data,
         )
         db.add(session)
         db.commit()
         wa.send_text(
             chat_id,
-            f"\U0001f4cb Creando actividad: *{name}*\n\n"
-            "\u00bfCu\u00e1l es el *n\u00famero de cuenta* para dep\u00f3sitos?",
+            f"📋 Creando actividad: *{name}*\n\n"
+            "¿Cuál es el *número de cuenta* para depósitos?",
         )
         return True
 
     # ── fundraiser list ───────────────────────────────────────────────────
     if sub == "list" or sub == "lista":
-        fundraisers = db.query(models.Fundraiser).all()
+        query = db.query(models.Fundraiser).order_by(models.Fundraiser.created_at.desc())
+        if caller_parent:
+            query = query.filter(models.Fundraiser.created_by_jid == caller_parent.whatsapp_jid)
+        fundraisers = query.all()
         if not fundraisers:
-            wa.send_text(chat_id, "\U0001f4cb _No hay actividades registradas._")
+            wa.send_text(chat_id, "📋 _No hay actividades registradas._")
             return True
-        lines = ["\U0001f4cb *Actividades:*\n"]
+        lines = ["📋 *Actividades:*\n"]
         for f in fundraisers:
             pcount = db.query(models.Payment).filter_by(fundraiser_id=f.id).count()
-            status_icon = "\u2705" if f.status == "active" else "\U0001f6d1"
-            type_label = f"${f.fixed_amount}" if f.type == "fixed" else "cat\u00e1logo"
+            status_icon = "✅" if f.status == "active" else "🛑"
+            type_label = f"${f.fixed_amount}" if f.type == "fixed" else "catálogo"
             lines.append(
-                f"{status_icon} [ID `{f.id}`] *{f.name}* \u2014 {f.type} ({type_label}) "
-                f"\u2014 {pcount} pago(s) \u2014 {f.status}"
+                f"{status_icon} [ID `{f.id}`] *{f.name}* — {f.type} ({type_label}) "
+                f"— {pcount} pago(s) — {f.status}"
             )
         wa.send_text(chat_id, "\n".join(lines))
         return True
@@ -102,12 +132,15 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
             return True
         fund = db.query(models.Fundraiser).get(int(fid))
         if not fund:
-            wa.send_text(chat_id, f"\u2753 No encontr\u00e9 actividad con ID `{fid}`.")
+            wa.send_text(chat_id, f"❓ No encontré actividad con ID `{fid}`.")
+            return True
+        if not _check_fund_access(fund, caller_parent):
+            wa.send_text(chat_id, "❌ No tienes permiso para gestionar esa actividad.")
             return True
         fund.status = "closed"
         fund.closed_at = datetime.utcnow()
         db.commit()
-        wa.send_text(chat_id, f"\U0001f6d1 Actividad *{fund.name}* cerrada.")
+        wa.send_text(chat_id, f"🛑 Actividad *{fund.name}* cerrada.")
         return True
 
     # ── fundraiser delete <id> ────────────────────────────────────────────
@@ -118,19 +151,22 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
             return True
         fund = db.query(models.Fundraiser).get(int(fid))
         if not fund:
-            wa.send_text(chat_id, f"\u2753 No encontr\u00e9 actividad con ID `{fid}`.")
+            wa.send_text(chat_id, f"❓ No encontré actividad con ID `{fid}`.")
+            return True
+        if not _check_fund_access(fund, caller_parent):
+            wa.send_text(chat_id, "❌ No tienes permiso para gestionar esa actividad.")
             return True
         pcount = db.query(models.Payment).filter_by(fundraiser_id=fund.id).count()
         if pcount > 0:
             wa.send_text(
                 chat_id,
-                f"\u274c No se puede eliminar *{fund.name}*: tiene {pcount} pago(s) registrados.\n"
-                "Usa `fundraiser close {fid}` para cerrarla en su lugar.",
+                f"❌ No se puede eliminar *{fund.name}*: tiene {pcount} pago(s) registrados.\n"
+                f"Usa `/fundraiser close {fid}` para cerrarla en su lugar.",
             )
             return True
         db.delete(fund)
         db.commit()
-        wa.send_text(chat_id, f"\U0001f5d1\ufe0f Actividad *{fund.name}* eliminada.")
+        wa.send_text(chat_id, f"🗑️ Actividad *{fund.name}* eliminada.")
         return True
 
     # ── fundraiser report <id> ────────────────────────────────────────────
@@ -141,15 +177,54 @@ async def handle_command(admin_phone: str, chat_id: str, text: str, db: Session)
             return True
         fund = db.query(models.Fundraiser).get(int(fid))
         if not fund:
-            wa.send_text(chat_id, f"\u2753 No encontr\u00e9 actividad con ID `{fid}`.")
+            wa.send_text(chat_id, f"❓ No encontré actividad con ID `{fid}`.")
+            return True
+        if not _check_fund_access(fund, caller_parent):
+            wa.send_text(chat_id, "❌ No tienes permiso para ver esa actividad.")
             return True
         payments = db.query(models.Payment).filter_by(fundraiser_id=fund.id).all()
         if not payments:
-            wa.send_text(chat_id, f"\u26a0\ufe0f *{fund.name}* no tiene pagos registrados a\u00fan.")
+            wa.send_text(chat_id, f"⚠️ *{fund.name}* no tiene pagos registrados aún.")
             return True
 
-        # Send as text report (WAHA CORE doesn't support sendFile)
         _send_text_report(chat_id, fund, payments, db)
+        return True
+
+    # ── fundraiser subscribe <id> <phone> ─────────────────────────────────
+    if sub in ("subscribe", "suscribir", "notify", "notificar"):
+        arg = parts[2].strip() if len(parts) > 2 else ""
+        arg_parts = arg.split(None, 1)
+        if len(arg_parts) < 2 or not arg_parts[0].isdigit():
+            wa.send_text(chat_id, "Uso: `/fundraiser subscribe <id> <teléfono>`\nEj: `/fundraiser subscribe 3 50768001234`")
+            return True
+        fid, phone = int(arg_parts[0]), arg_parts[1].strip().lstrip("+").replace(" ", "")
+        fund = db.query(models.Fundraiser).get(fid)
+        if not fund:
+            wa.send_text(chat_id, f"❓ No encontré actividad con ID `{fid}`.")
+            return True
+        existing = db.query(models.FundraiserSubscriber).filter_by(fundraiser_id=fid, phone=phone).first()
+        if existing:
+            wa.send_text(chat_id, f"ℹ️ El número `{phone}` ya está suscrito a *{fund.name}*.")
+            return True
+        db.add(models.FundraiserSubscriber(fundraiser_id=fid, phone=phone))
+        db.commit()
+        wa.send_text(chat_id, f"✅ `{phone}` recibirá notificaciones de pagos para *{fund.name}*.")
+        return True
+
+    if sub in ("unsubscribe", "desuscribir"):
+        arg = parts[2].strip() if len(parts) > 2 else ""
+        arg_parts = arg.split(None, 1)
+        if len(arg_parts) < 2 or not arg_parts[0].isdigit():
+            wa.send_text(chat_id, "Uso: `/fundraiser unsubscribe <id> <teléfono>`")
+            return True
+        fid, phone = int(arg_parts[0]), arg_parts[1].strip().lstrip("+").replace(" ", "")
+        sub_row = db.query(models.FundraiserSubscriber).filter_by(fundraiser_id=fid, phone=phone).first()
+        if not sub_row:
+            wa.send_text(chat_id, f"❓ `{phone}` no está suscrito a esa actividad.")
+            return True
+        db.delete(sub_row)
+        db.commit()
+        wa.send_text(chat_id, f"✅ `{phone}` eliminado de las notificaciones.")
         return True
 
     # ── Unknown sub-command ───────────────────────────────────────────────
@@ -172,9 +247,9 @@ async def handle_conversation(
         _advance(session, "awaiting_type", data, db)
         wa.send_text(
             chat_id,
-            "\u00bfQu\u00e9 tipo de actividad es?\n\n"
-            "  `1` \u2014 Monto fijo (todos pagan lo mismo)\n"
-            "  `2` \u2014 Cat\u00e1logo de productos (cada quien elige)\n\n"
+            "¿Qué tipo de actividad es?\n\n"
+            "  `1` — Monto fijo (todos pagan lo mismo)\n"
+            "  `2` — Catálogo de productos (cada quien elige)\n\n"
             "Responde *1* o *2*:",
         )
 
@@ -204,19 +279,19 @@ async def handle_conversation(
             amount = Decimal(text.replace(",", ".").replace("$", "").strip())
             data["fixed_amount"] = str(amount)
         except (InvalidOperation, ValueError):
-            wa.send_text(chat_id, "\u274c Monto inv\u00e1lido. Ingresa un n\u00famero, ej: `25.00`")
+            wa.send_text(chat_id, "❌ Monto inválido. Ingresa un número, ej: `25.00`")
             return
-        _advance(session, "awaiting_confirmation", data, db)
-        _send_summary(chat_id, data)
+        _advance(session, "awaiting_audience", data, db)
+        _prompt_audience(chat_id, data, db)
 
     # ── awaiting_product (variable) ───────────────────────────────────────
     elif step == "awaiting_product":
         if text.lower() in ("listo", "done", "fin"):
             if not data.get("products"):
-                wa.send_text(chat_id, "\u274c Debes agregar al menos un producto.")
+                wa.send_text(chat_id, "❌ Debes agregar al menos un producto.")
                 return
-            _advance(session, "awaiting_confirmation", data, db)
-            _send_summary(chat_id, data)
+            _advance(session, "awaiting_audience", data, db)
+            _prompt_audience(chat_id, data, db)
             return
 
         # Parse "Name Price"
@@ -238,15 +313,60 @@ async def handle_conversation(
         except (InvalidOperation, ValueError):
             wa.send_text(chat_id, f"\u274c Precio inv\u00e1lido: `{price_str}`. Ej: `Galletas 5.00`")
 
+    # ── awaiting_audience ─────────────────────────────────────────────────
+    elif step == "awaiting_audience":
+        allowed = data.get("allowed_classroom_ids")
+        if text.lower() in ("todos", "all", "todas"):
+            if allowed:
+                audience_ids = allowed
+            else:
+                classrooms = db.query(models.Classroom).filter_by(is_active=True).all()
+                audience_ids = [c.id for c in classrooms]
+        elif text.lower() in ("ninguno", "none", "skip", "omitir"):
+            audience_ids = None  # no restriction
+        else:
+            raw_ids = [x.strip() for x in text.replace(",", " ").split()]
+            audience_ids = []
+            invalid = []
+            for rid in raw_ids:
+                if rid.isdigit():
+                    cid = int(rid)
+                    if allowed and cid not in allowed:
+                        invalid.append(f"{rid} (no permitido)")
+                        continue
+                    cls = db.query(models.Classroom).get(cid)
+                    if cls:
+                        audience_ids.append(cid)
+                    else:
+                        invalid.append(rid)
+                else:
+                    invalid.append(rid)
+            if invalid:
+                wa.send_text(
+                    chat_id,
+                    f"⚠️ IDs inválidos o no permitidos: {', '.join(invalid)}\n"
+                    "Intenta de nuevo:",
+                )
+                return
+            if not audience_ids:
+                wa.send_text(chat_id, "Debes incluir al menos un salón o escribe `todos`.")
+                return
+
+        data["audience"] = audience_ids
+        _advance(session, "awaiting_confirmation", data, db)
+        _send_summary(chat_id, data, db)
+
     # ── awaiting_confirmation ─────────────────────────────────────────────
     elif step == "awaiting_confirmation":
-        if text.lower() in ("si", "s\u00ed", "yes", "confirmar"):
+        if text.lower() in ("si", "sí", "yes", "confirmar"):
             fund = models.Fundraiser(
                 name=data["name"],
                 account_number=data["account_number"],
                 type=data["type"],
                 fixed_amount=data.get("fixed_amount"),
                 status="active",
+                created_by_jid=data.get("creator_jid"),
+                audience_classroom_ids=data.get("audience"),
             )
             db.add(fund)
             db.flush()
@@ -265,13 +385,13 @@ async def handle_conversation(
 
             wa.send_text(
                 chat_id,
-                f"\u2705 Actividad *{fund.name}* creada (ID `{fund.id}`).\n\n"
-                f"Los padres pueden pagar con: `/pagar {fund.name}`",
+                f"✅ Actividad *{fund.name}* creada (ID `{fund.id}`).\n\n"
+                f"{_format_pay_link(fund)}",
             )
         elif text.lower() in ("no", "cancelar", "cancel"):
             db.delete(session)
             db.commit()
-            wa.send_text(chat_id, "\u274c Creaci\u00f3n cancelada.")
+            wa.send_text(chat_id, "❌ Creación cancelada.")
         else:
             wa.send_text(chat_id, "Responde *si* para confirmar o *no* para cancelar.")
 
@@ -340,6 +460,31 @@ _HELP = (
 )
 
 
+def _format_pay_link(fund: models.Fundraiser) -> str:
+    """Return a copyable block with the wa.me deep link for this fundraiser."""
+    from app.config import get_settings
+    import urllib.parse
+    bot_phone = get_settings().waha_bot_phone
+    encoded = urllib.parse.quote(f"pagar {fund.name}")
+    wa_link = f"https://wa.me/{bot_phone}?text={encoded}"
+    type_label = f"Monto fijo: ${fund.fixed_amount}" if fund.type == "fixed" else "Catálogo de productos"
+
+    return (
+        f"💳 *Cómo compartir esta actividad:*\n\n"
+        f"Actividad: *{fund.name}*\n"
+        f"ID: `{fund.id}` | {type_label}\n\n"
+        f"📲 *Enlace directo* (toca para abrir en WhatsApp):\n"
+        f"{wa_link}\n\n"
+        f"💬 *Mensaje para copiar y pegar:*\n"
+        f"─────────────────────\n"
+        f"💳 Actividad de pago disponible:\n"
+        f"*{fund.name}*\n\n"
+        f"Toca el enlace para pagar:\n"
+        f"{wa_link}\n"
+        f"─────────────────────"
+    )
+
+
 def _advance(session: models.ConversationSession, step: str, data: dict, db: Session):
     session.step = step
     session.data = dict(data)
@@ -348,20 +493,50 @@ def _advance(session: models.ConversationSession, step: str, data: dict, db: Ses
     db.commit()
 
 
-def _send_summary(chat_id: str, data: dict):
+def _prompt_audience(chat_id: str, data: dict, db: Session):
+    """Ask which classrooms this fundraiser targets."""
+    allowed = data.get("allowed_classroom_ids")
+    if allowed:
+        classrooms = db.query(models.Classroom).filter(
+            models.Classroom.id.in_(allowed), models.Classroom.is_active == True
+        ).all()
+    else:
+        classrooms = db.query(models.Classroom).filter_by(is_active=True).all()
+
+    cls_list = "\n".join(f"  `{c.id}` — {c.name}" for c in classrooms)
+    wa.send_text(
+        chat_id,
+        f"¿A qué *salones* va dirigida esta actividad?\n\n"
+        f"Salones disponibles:\n{cls_list}\n\n"
+        "Envía los IDs separados por comas (ej: `1, 3`) o `todos` para incluir todos.",
+    )
+
+
+def _send_summary(chat_id: str, data: dict, db: Session):
     """Send a confirmation summary before creating the fundraiser."""
+    audience = data.get("audience")
+    if audience:
+        cls_names = []
+        for cid in audience:
+            cls = db.query(models.Classroom).get(cid)
+            cls_names.append(cls.name if cls else str(cid))
+        audience_str = ", ".join(cls_names)
+    else:
+        audience_str = "Todos"
+
     lines = [
-        "\U0001f4cb *Resumen de la actividad:*\n",
-        f"  \u2022 Nombre: *{data['name']}*",
-        f"  \u2022 Cuenta: `{data['account_number']}`",
-        f"  \u2022 Tipo: *{data['type']}*",
+        "📋 *Resumen de la actividad:*\n",
+        f"  • Nombre: *{data['name']}*",
+        f"  • Cuenta: `{data['account_number']}`",
+        f"  • Tipo: *{data['type']}*",
+        f"  • Salones: {audience_str}",
     ]
     if data["type"] == "fixed":
-        lines.append(f"  \u2022 Monto: *${data['fixed_amount']}*")
+        lines.append(f"  • Monto: *${data['fixed_amount']}*")
     else:
-        lines.append("  \u2022 Productos:")
+        lines.append("  • Productos:")
         for p in data.get("products", []):
-            lines.append(f"    \u2514 {p['name']} \u2014 ${p['price']}")
+            lines.append(f"    └ {p['name']} — ${p['price']}")
 
-    lines.append("\n\u00bfConfirmar? Responde *si* o *no*.")
+    lines.append("\n¿Confirmar? Responde *si* o *no*.")
     wa.send_text(chat_id, "\n".join(lines))

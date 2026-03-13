@@ -215,12 +215,14 @@ async def handle(
                 )
                 classroom_info.append((s, existing_student.classroom_id))
             else:
-                # First parent — create new Classroom + Student records
-                classroom = models.Classroom(
-                    name=f"{s['name']} - {s['grade']}",
-                )
-                db.add(classroom)
-                db.flush()
+                # First parent — reuse existing Classroom if grade matches, else create
+                classroom = db.query(models.Classroom).filter_by(
+                    name=s['grade'], is_active=True
+                ).first()
+                if not classroom:
+                    classroom = models.Classroom(name=s['grade'])
+                    db.add(classroom)
+                    db.flush()
 
                 student_rec = models.Student(
                     id=s["id"],

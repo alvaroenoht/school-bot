@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey,
-    Integer, JSON, String, Text,
+    Integer, JSON, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -145,25 +145,57 @@ class KnownContact(Base):
     jid             = Column(String, unique=True, nullable=False, index=True)
     name            = Column(String, nullable=False)
     child_name      = Column(String, nullable=False)
-    source_group_id = Column(String, nullable=True)
+    source_group_id = Column(String, nullable=True)   # kept for backwards compat
     created_at      = Column(DateTime, default=datetime.utcnow)
+
+    groups = relationship("KnownContactGroup", back_populates="contact")
+
+
+class KnownContactGroup(Base):
+    """Cached group membership: which Classrooms a KnownContact belongs to."""
+    __tablename__ = "known_contact_groups"
+    __table_args__ = (UniqueConstraint("contact_jid", "classroom_id", name="uq_kcg_contact_classroom"),)
+
+    id           = Column(Integer, primary_key=True, index=True)
+    contact_jid  = Column(String, ForeignKey("known_contacts.jid"), nullable=False, index=True)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=False)
+    active       = Column(Boolean, default=True)
+    synced_at    = Column(DateTime, default=datetime.utcnow)
+
+    contact   = relationship("KnownContact", back_populates="groups")
+    classroom = relationship("Classroom")
 
 
 class Fundraiser(Base):
     """A fundraiser campaign created by admin."""
     __tablename__ = "fundraisers"
 
-    id             = Column(Integer, primary_key=True, index=True)
-    name           = Column(String, nullable=False)
-    account_number = Column(String, nullable=False)
-    type           = Column(String, nullable=False)       # "fixed" or "variable"
-    fixed_amount   = Column(String, nullable=True)        # only for fixed type
-    status         = Column(String, default="active")     # "active" or "closed"
-    created_at     = Column(DateTime, default=datetime.utcnow)
-    closed_at      = Column(DateTime, nullable=True)
+    id                      = Column(Integer, primary_key=True, index=True)
+    name                    = Column(String, nullable=False)
+    account_number          = Column(String, nullable=False)
+    type                    = Column(String, nullable=False)       # "fixed" or "variable"
+    fixed_amount            = Column(String, nullable=True)        # only for fixed type
+    status                  = Column(String, default="active")     # "active" or "closed"
+    created_by_jid          = Column(String, nullable=True)        # creator JID (null = super admin)
+    audience_classroom_ids  = Column(JSON, nullable=True)          # [1, 3, 5] or null = all
+    created_at              = Column(DateTime, default=datetime.utcnow)
+    closed_at               = Column(DateTime, nullable=True)
 
-    products = relationship("FundraiserProduct", back_populates="fundraiser", cascade="all, delete-orphan")
-    payments = relationship("Payment", back_populates="fundraiser")
+    products     = relationship("FundraiserProduct", back_populates="fundraiser", cascade="all, delete-orphan")
+    payments     = relationship("Payment", back_populates="fundraiser")
+    subscribers  = relationship("FundraiserSubscriber", back_populates="fundraiser", cascade="all, delete-orphan")
+
+
+class FundraiserSubscriber(Base):
+    """Extra phone numbers that receive payment notifications for a fundraiser."""
+    __tablename__ = "fundraiser_subscribers"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    fundraiser_id = Column(Integer, ForeignKey("fundraisers.id"), nullable=False, index=True)
+    phone         = Column(String, nullable=False)   # international format, no + or spaces
+    added_at      = Column(DateTime, default=datetime.utcnow)
+
+    fundraiser = relationship("Fundraiser", back_populates="subscribers")
 
 
 class FundraiserProduct(Base):
@@ -214,3 +246,119 @@ class OrderItem(Base):
 
     payment = relationship("Payment", back_populates="order_items")
     product = relationship("FundraiserProduct", back_populates="order_items")
+
+
+# ── v3.0 Forms Module ─────────────────────────────────────────────────────────
+
+
+class Form(Base):
+    """A data-collection form created by admin or a Form Manager."""
+    __tablename__ = "forms"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    title                 = Column(String, nullable=False)
+    description           = Column(Text, nullable=True)
+    purpose               = Column(String, nullable=False)   # intake|survey|event_registration|volunteer_signup
+    status                = Column(String, default="draft")  # draft|open|closed|archived
+    form_code             = Column(String, unique=True, nullable=True, index=True)  # e.g. FORM-XK4M2
+    created_by_jid        = Column(String, nullable=False)
+    created_at            = Column(DateTime, default=datetime.utcnow)
+    opens_at              = Column(DateTime, nullable=True)
+    closes_at             = Column(DateTime, nullable=True)
+    archived_at           = Column(DateTime, nullable=True)
+    send_group_reminders  = Column(Boolean, default=True)
+    reminder_interval_days = Column(Integer, default=2)
+
+    questions   = relationship("FormQuestion",   back_populates="form",
+                               order_by="FormQuestion.order", cascade="all, delete-orphan")
+    submissions = relationship("FormSubmission", back_populates="form")
+    audience    = relationship("FormAudience",   back_populates="form", cascade="all, delete-orphan")
+
+
+class FormQuestion(Base):
+    """A single question within a form."""
+    __tablename__ = "form_questions"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    form_id       = Column(Integer, ForeignKey("forms.id"), nullable=False, index=True)
+    order         = Column(Integer, nullable=False)
+    text          = Column(Text, nullable=False)
+    hint          = Column(Text, nullable=True)       # optional italics note shown below question
+    type          = Column(String, nullable=False)   # yes_no|text|single_choice|multi_choice|number|date
+    answer_scope  = Column(String, default="parent")  # family|parent|student
+    required      = Column(Boolean, default=True)
+    options       = Column(JSON, nullable=True)       # list of strings for choice types
+    profile_field = Column(String, nullable=True)     # maps to ProfileFact.key if intake
+
+    form    = relationship("Form",       back_populates="questions")
+    answers = relationship("FormAnswer", back_populates="question")
+
+
+class FormAudience(Base):
+    """Which classrooms receive a form."""
+    __tablename__ = "form_audience"
+    __table_args__ = (UniqueConstraint("form_id", "classroom_id", name="uq_form_audience"),)
+
+    id           = Column(Integer, primary_key=True, index=True)
+    form_id      = Column(Integer, ForeignKey("forms.id"), nullable=False, index=True)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=False)
+
+    form      = relationship("Form",      back_populates="audience")
+    classroom = relationship("Classroom")
+
+
+class FormSubmission(Base):
+    """A parent's (in-progress or completed) response to a form."""
+    __tablename__ = "form_submissions"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    form_id         = Column(Integer, ForeignKey("forms.id"), nullable=False, index=True)
+    respondent_jid  = Column(String, nullable=False, index=True)
+    respondent_name = Column(String, nullable=False)
+    student_id      = Column(Integer, ForeignKey("students.id"), nullable=True)
+    status          = Column(String, default="in_progress")  # in_progress|submitted|withdrawn
+    started_at      = Column(DateTime, default=datetime.utcnow)
+    submitted_at    = Column(DateTime, nullable=True)
+    last_edited_at  = Column(DateTime, nullable=True)
+
+    form    = relationship("Form",       back_populates="submissions")
+    answers = relationship("FormAnswer", back_populates="submission", cascade="all, delete-orphan")
+    student = relationship("Student")
+
+
+class FormReader(Base):
+    """Granted read access to form results via a one-time join code."""
+    __tablename__ = "form_readers"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    code       = Column(String, unique=True, nullable=False, index=True)
+    jid        = Column(String, unique=True, nullable=True, index=True)  # set on /form join
+    name       = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    joined_at  = Column(DateTime, nullable=True)
+
+
+class FormAnswer(Base):
+    """A single answer to one question in a submission."""
+    __tablename__ = "form_answers"
+    __table_args__ = (UniqueConstraint("submission_id", "question_id", name="uq_form_answer"),)
+
+    id            = Column(Integer, primary_key=True, index=True)
+    submission_id = Column(Integer, ForeignKey("form_submissions.id"), nullable=False, index=True)
+    question_id   = Column(Integer, ForeignKey("form_questions.id"), nullable=False)
+    value         = Column(Text, nullable=True)
+    value_json    = Column(JSON, nullable=True)   # for multi_choice
+    answered_at   = Column(DateTime, default=datetime.utcnow)
+
+    submission = relationship("FormSubmission", back_populates="answers")
+    question   = relationship("FormQuestion",   back_populates="answers")
+
+
+class BotStatus(Base):
+    """Singleton row tracking bot state: last sync time + optional maintenance message."""
+    __tablename__ = "bot_status"
+
+    id               = Column(Integer, primary_key=True)
+    last_sync_at     = Column(DateTime, nullable=True)
+    maintenance_msg  = Column(Text, nullable=True)   # set → shown to DM users; None → normal
+    updated_at       = Column(DateTime, default=datetime.utcnow)

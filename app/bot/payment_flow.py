@@ -76,9 +76,38 @@ async def start_from_command(
         "payer_type": "parent" if isinstance(payer, models.Parent) else "contact",
     }
 
-    # Clean up any existing session
+    # Check for resumable session for the same fundraiser
     existing = db.query(models.ConversationSession).filter_by(chat_jid=raw_jid).first()
-    if existing:
+    if existing and existing.flow == "payment":
+        existing_fid = (existing.data or {}).get("fundraiser_id")
+        if existing_fid == fundraiser.id:
+            # Resume: re-send the prompt for the current step
+            resumable = {"awaiting_receipt", "awaiting_manual_amount", "awaiting_manual_code",
+                         "awaiting_confirmation", "awaiting_order", "confirming_order"}
+            if existing.step in resumable:
+                wa.send_text(
+                    chat_id,
+                    f"📋 Tienes un pago pendiente para *{fundraiser.name}*.\n"
+                    "Continuando donde lo dejaste...",
+                )
+                if existing.step == "awaiting_receipt":
+                    _send_payment_instructions(chat_id, fundraiser, existing.data)
+                elif existing.step in ("awaiting_manual_amount",):
+                    wa.send_text(chat_id, "Ingresa el *monto pagado* (ej: `25.00`):")
+                elif existing.step == "awaiting_manual_code":
+                    wa.send_text(chat_id, "Ingresa el *código de confirmación* del pago:")
+                elif existing.step == "awaiting_confirmation":
+                    d = existing.data or {}
+                    wa.send_text(
+                        chat_id,
+                        f"📝 Datos del pago:\n"
+                        f"  • Código: *{d.get('confirmation_code', '—')}*\n"
+                        f"  • Monto: *${d.get('ocr_amount', '?')}*\n\n"
+                        "¿Es correcto? Responde *si* o *no*.",
+                    )
+                elif existing.step in ("awaiting_order", "showing_catalog", "confirming_order"):
+                    _send_catalog(chat_id, fundraiser, db)
+                return
         db.delete(existing)
         db.flush()
 
@@ -165,6 +194,7 @@ async def handle(
             data.pop("cart", None)
             data.pop("cart_total", None)
             _advance(session, "awaiting_order", data, db)
+            wa.send_text(chat_id, "Env\u00eda tu nuevo pedido \u2014 reemplazar\u00e1 el anterior:")
             _send_catalog(chat_id, fundraiser, db)
         else:
             wa.send_text(chat_id, "Responde *si* para confirmar o *no* para cambiar tu pedido.")
@@ -271,13 +301,14 @@ def _send_catalog(chat_id: str, fundraiser: models.Fundraiser, db: Session):
         .order_by(models.FundraiserProduct.sort_order)
         .all()
     )
-    lines = [f"\U0001f6d2 *Cat\u00e1logo \u2014 {fundraiser.name}:*\n"]
+    lines = [f"\U0001f6d2 *{fundraiser.name}*\n"]
     for i, p in enumerate(products, 1):
-        lines.append(f"  `{i}`. {p.name} \u2014 ${p.price}")
+        lines.append(f"  *{i}* — {p.name}  ${p.price}")
     lines.append(
-        "\n\U0001f4dd Env\u00eda tu pedido indicando cantidad y producto.\n"
-        "Ej: `2 Galletas, 1 Torta`\n"
-        "o usa n\u00fameros: `1:2, 3:1` (producto:cantidad)"
+        "\n\U0001f4dd Responde con los *n\u00fameros* de lo que quieres:\n"
+        "  `1 4` \u2014 uno del 1 y uno del 4\n"
+        "  `1 1 4` \u2014 dos del 1 y uno del 4\n"
+        "  `1x2 4` \u2014 lo mismo con cantidad expl\u00edcita"
     )
     wa.send_text(chat_id, "\n".join(lines))
 
@@ -295,37 +326,38 @@ async def _process_order_input(
         .all()
     )
 
-    cart = []
-    # Try "index:qty" format first: "1:2, 3:1"
-    idx_pattern = re.findall(r"(\d+)\s*:\s*(\d+)", text)
-    if idx_pattern:
-        for idx_str, qty_str in idx_pattern:
-            idx = int(idx_str)
-            qty = int(qty_str)
+    qty_map: dict[int, int] = {}  # product index (1-based) → quantity
+
+    # Format 1: "1x2 3x1" or "1:2 3:1" — explicit quantity
+    explicit = re.findall(r"(\d+)\s*[x:]\s*(\d+)", text)
+    if explicit:
+        for idx_str, qty_str in explicit:
+            idx, qty = int(idx_str), int(qty_str)
             if 1 <= idx <= len(products) and qty > 0:
-                p = products[idx - 1]
-                cart.append({"product_id": p.id, "name": p.name, "price": p.price, "qty": qty})
+                qty_map[idx] = qty_map.get(idx, 0) + qty
     else:
-        # Try "qty Name" format: "2 Galletas, 1 Torta"
-        items = re.split(r"[,;\n]+", text)
-        for item in items:
-            item = item.strip()
-            m = re.match(r"(\d+)\s+(.+)", item)
-            if not m:
-                continue
-            qty = int(m.group(1))
-            name = m.group(2).strip().lower()
-            for p in products:
-                if name in p.name.lower() or p.name.lower() in name:
-                    cart.append({"product_id": p.id, "name": p.name, "price": p.price, "qty": qty})
-                    break
+        # Format 2: space/comma-separated numbers — each occurrence = +1 qty
+        # Handles "1 4", "1,4", "1 1 4" (two of #1), "1. 4" (dot ignored)
+        tokens = re.findall(r"\d+", text)
+        for token in tokens:
+            idx = int(token)
+            if 1 <= idx <= len(products):
+                qty_map[idx] = qty_map.get(idx, 0) + 1
+
+    cart = []
+    for idx in sorted(qty_map):
+        p = products[idx - 1]
+        qty = qty_map[idx]
+        cart.append({"product_id": p.id, "name": p.name, "price": p.price, "qty": qty})
 
     if not cart:
+        nums = " ".join(str(i) for i in range(1, min(len(products) + 1, 4)))
         wa.send_text(
             chat_id,
-            "\u274c No entend\u00ed tu pedido.\n\n"
-            "Usa: `2 Galletas, 1 Torta`\n"
-            "o: `1:2, 3:1` (producto:cantidad)",
+            f"\u274c No entend\u00ed tu pedido.\n\n"
+            f"Responde con los n\u00fameros del cat\u00e1logo:\n"
+            f"  `{nums}` \u2014 uno de cada uno\n"
+            f"  `1x2 4` \u2014 dos del 1 y uno del 4",
         )
         return
 
@@ -500,6 +532,23 @@ async def _finalize_payment(
         )
     except Exception as e:
         logger.warning(f"Could not notify admin of payment: {e}")
+
+    # Notify additional subscribers
+    try:
+        subscribers = db.query(models.FundraiserSubscriber).filter_by(fundraiser_id=fundraiser.id).all()
+        for s in subscribers:
+            flag_note = " ⚠️ *REQUIERE REVISIÓN*" if flagged else ""
+            wa.send_text(
+                f"{s.phone}@c.us",
+                f"💳 Nuevo pago recibido{flag_note}\n\n"
+                f"  • Actividad: *{fundraiser.name}*\n"
+                f"  • Padre: {data.get('payer_name', '?')}\n"
+                f"  • Estudiante: {data.get('child_name', '?')}\n"
+                f"  • Monto: ${data.get('ocr_amount', '?')}\n"
+                f"  • Código: {data.get('confirmation_code', 'N/A')}",
+            )
+    except Exception as e:
+        logger.warning(f"Could not notify subscribers of payment: {e}")
 
 
 # ── Session helpers ────────────────────────────────────────────────────────────
