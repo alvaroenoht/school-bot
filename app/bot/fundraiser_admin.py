@@ -195,7 +195,7 @@ async def handle_command(
         arg = parts[2].strip() if len(parts) > 2 else ""
         arg_parts = arg.split(None, 1)
         if len(arg_parts) < 2 or not arg_parts[0].isdigit():
-            wa.send_text(chat_id, "Uso: `/fundraiser subscribe <id> <teléfono>`\nEj: `/fundraiser subscribe 3 50768001234`")
+            wa.send_text(chat_id, "Uso: `/fundraiser subscribe <id> <teléfono>`\nEj: `/fundraiser subscribe 3 50768001234`\n⚠️ El teléfono debe ser solo dígitos, sin `+`, espacios ni guiones.")
             return True
         fid, phone = int(arg_parts[0]), arg_parts[1].strip().lstrip("+").replace(" ", "")
         fund = db.query(models.Fundraiser).get(fid)

@@ -62,6 +62,15 @@ def create_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # ── Hourly DB backup → S3 ──────────────────────────────────────────────────
+    scheduler.add_job(
+        _db_backup_job,
+        CronTrigger(minute=0, timezone=tz),  # top of every hour
+        id="db_backup",
+        name="Hourly PostgreSQL backup to S3",
+        replace_existing=True,
+    )
+
     return scheduler
 
 
@@ -192,6 +201,66 @@ async def _form_jobs():
         logger.exception("FORM jobs error: %s", e)
     finally:
         db.close()
+
+
+async def _db_backup_job():
+    """Dump PostgreSQL DB and upload to S3 under backups/YYYY-MM-DD/schoolbot_YYYYMMDD_HHmm.dump.
+    S3 lifecycle rules can be used to auto-expire old backups (recommended: 30 days).
+    """
+    import asyncio
+    import os
+    import subprocess
+    import tempfile
+    from datetime import datetime
+    from urllib.parse import urlparse
+
+    from app.config import get_settings
+    from app.utils.s3_upload import upload_file_to_s3
+
+    settings = get_settings()
+    now = datetime.utcnow()
+    date_str = now.strftime("%Y-%m-%d")
+    ts_str = now.strftime("%Y%m%d_%H%M")
+    s3_key = f"backups/{date_str}/schoolbot_{ts_str}.dump"
+
+    logger.info("⏰ DB backup starting → s3://%s/%s", settings.s3_bucket, s3_key)
+
+    db_url = urlparse(settings.database_url)
+    env = {**os.environ, "PGPASSWORD": db_url.password or ""}
+
+    with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                [
+                    "pg_dump",
+                    "--format=custom",
+                    f"--host={db_url.hostname}",
+                    f"--port={db_url.port or 5432}",
+                    f"--username={db_url.username}",
+                    f"--dbname={db_url.path.lstrip('/')}",
+                    f"--file={tmp_path}",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+            ),
+        )
+        if result.returncode != 0:
+            logger.error("DB backup pg_dump failed: %s", result.stderr)
+            return
+
+        await loop.run_in_executor(None, lambda: upload_file_to_s3(tmp_path, s3_key))
+        logger.info("✅ DB backup uploaded: %s", s3_key)
+    except Exception:
+        logger.exception("DB backup failed")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 async def _sync_known_contact_groups_job():
