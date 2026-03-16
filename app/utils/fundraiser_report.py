@@ -1,140 +1,146 @@
 """
-Fundraiser payment report PDF generator.
+Fundraiser CSV report generator.
 
-Uses ReportLab to create a tabular report of all payments for a fundraiser.
+Generates a CSV, uploads to S3, and returns a presigned download URL.
+
+For variable (catalog) fundraisers: one column per product with quantities, totals row at end.
+For fixed fundraisers: simple rows with amounts, totals row at end.
 """
+import csv
+import io
 import logging
+import os
+import tempfile
 from datetime import datetime
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import (
-    Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
-)
+from sqlalchemy.orm import Session
 
 from app.db import models
 
 logger = logging.getLogger(__name__)
 
 
-def create_fundraiser_report(
+def generate_fundraiser_csv_url(
     fundraiser: models.Fundraiser,
     payments: list[models.Payment],
-    output_path: str,
-    db=None,
-):
-    """Generate a PDF report for a fundraiser with all payment details."""
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=landscape(letter),
-        leftMargin=0.5 * inch,
-        rightMargin=0.5 * inch,
-        topMargin=0.5 * inch,
-        bottomMargin=0.5 * inch,
-    )
-    styles = getSampleStyleSheet()
-    elements = []
+    db: Session,
+) -> str:
+    """Build CSV, upload to S3, return presigned URL."""
+    from app.utils.s3_upload import upload_file_to_s3, generate_presigned_url
+    from app.utils.helpers import shorten_url
 
-    # Title
-    type_label = f"Monto fijo: ${fundraiser.fixed_amount}" if fundraiser.type == "fixed" else "Catálogo"
-    elements.append(Paragraph(
-        f"<b>Reporte: {fundraiser.name}</b> — {type_label} — {fundraiser.status}",
-        styles["Title"],
-    ))
-    elements.append(Spacer(1, 12))
+    content = _build_csv(fundraiser, payments, db)
 
-    # Summary line
-    total_amount = sum(
-        float(p.amount) for p in payments if p.amount and p.amount.replace(".", "").isdigit()
-    )
-    confirmed = sum(1 for p in payments if p.status == "confirmed")
-    flagged = sum(1 for p in payments if p.status == "flagged")
-    elements.append(Paragraph(
-        f"Total recaudado: <b>${total_amount:.2f}</b> — "
-        f"Pagos: {len(payments)} (✅ {confirmed} confirmados, ⚠️ {flagged} requieren revisión)",
-        styles["Normal"],
-    ))
-    elements.append(Spacer(1, 12))
+    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+        f.write(content)
+        tmp_path = f.name
 
-    # Table
-    if fundraiser.type == "variable" and db:
-        headers = ["#", "Padre", "Estudiante", "Pedido", "Código", "Total", "Estado", "Fecha"]
-        data_rows = [headers]
-        for i, p in enumerate(payments, 1):
-            # Get order items
-            items = db.query(models.OrderItem).filter_by(payment_id=p.id).all() if db else []
-            order_text = ", ".join(
-                f"{oi.quantity}x {oi.product.name}" for oi in items
-            ) if items else "—"
+    try:
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        s3_key = f"fundraisers/fundraiser_{fundraiser.id}_{timestamp}.csv"
+        upload_file_to_s3(tmp_path, s3_key)
+        presigned = generate_presigned_url(s3_key)
+        return shorten_url(presigned)
+    finally:
+        os.unlink(tmp_path)
 
-            status_text = "⚠️" if p.status == "flagged" else "✅"
-            date_str = p.submitted_at.strftime("%d/%m %H:%M") if p.submitted_at else "—"
-            data_rows.append([
-                str(i),
-                p.payer_name,
-                p.child_name or "—",
-                order_text,
-                p.confirmation_code or "—",
-                f"${p.amount}" if p.amount else "—",
-                status_text,
-                date_str,
-            ])
-        col_widths = [0.4 * inch, 1.5 * inch, 1.5 * inch, 2.5 * inch, 1.2 * inch, 0.8 * inch, 0.6 * inch, 1.0 * inch]
+
+def _build_csv(
+    fundraiser: models.Fundraiser,
+    payments: list[models.Payment],
+    db: Session,
+) -> bytes:
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    if fundraiser.type == "variable":
+        _write_variable_csv(writer, fundraiser, payments, db)
     else:
-        headers = ["#", "Padre", "Estudiante", "Código", "Monto", "Estado", "Fecha"]
-        data_rows = [headers]
-        for i, p in enumerate(payments, 1):
-            status_text = "⚠️" if p.status == "flagged" else "✅"
-            date_str = p.submitted_at.strftime("%d/%m %H:%M") if p.submitted_at else "—"
-            data_rows.append([
-                str(i),
-                p.payer_name,
-                p.child_name or "—",
-                p.confirmation_code or "—",
-                f"${p.amount}" if p.amount else "—",
-                status_text,
-                date_str,
-            ])
-        col_widths = [0.4 * inch, 2.0 * inch, 2.0 * inch, 1.5 * inch, 1.0 * inch, 0.6 * inch, 1.0 * inch]
+        _write_fixed_csv(writer, payments)
 
-    table = Table(data_rows, colWidths=col_widths)
-    table.setStyle(TableStyle([
-        # Header row
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 9),
-        # Body rows
-        ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-        # Alternating row colors
-        *[
-            ("BACKGROUND", (0, r), (-1, r), colors.HexColor("#f5f6fa"))
-            for r in range(2, len(data_rows), 2)
-        ],
-        # Flagged row highlighting
-        *[
-            ("BACKGROUND", (0, i + 1), (-1, i + 1), colors.HexColor("#fff3cd"))
-            for i, p in enumerate(payments) if p.status == "flagged"
-        ],
-        # Grid
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN", (0, 0), (0, -1), "CENTER"),
-        ("ALIGN", (-3, 0), (-1, -1), "CENTER"),
-    ]))
+    return output.getvalue().encode("utf-8-sig")  # BOM for Excel
 
-    elements.append(table)
-    elements.append(Spacer(1, 12))
 
-    # Footer
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
-    elements.append(Paragraph(
-        f"<i>Generado: {now} — Cuenta: {fundraiser.account_number}</i>",
-        styles["Normal"],
-    ))
+def _write_variable_csv(writer, fundraiser, payments, db):
+    """One column per product; quantities per payer; totals row at bottom."""
+    products = (
+        db.query(models.FundraiserProduct)
+        .filter_by(fundraiser_id=fundraiser.id)
+        .order_by(models.FundraiserProduct.sort_order)
+        .all()
+    )
 
-    doc.build(elements)
-    logger.info(f"Fundraiser report generated: {output_path}")
+    # Pre-load order items keyed by payment_id → {product_id: quantity}
+    all_items = (
+        db.query(models.OrderItem)
+        .filter(models.OrderItem.payment_id.in_([p.id for p in payments]))
+        .all()
+    )
+    items_by_payment: dict[int, dict[int, int]] = {}
+    for item in all_items:
+        items_by_payment.setdefault(item.payment_id, {})[item.product_id] = item.quantity
+
+    # Header
+    product_names = [p.name for p in products]
+    writer.writerow(["Nombre", "Estudiante"] + product_names + ["Total", "Fecha"])
+
+    product_totals = {p.id: 0 for p in products}
+    grand_total = 0.0
+
+    for payment in payments:
+        order = items_by_payment.get(payment.id, {})
+        quantities = []
+        for p in products:
+            qty = order.get(p.id, 0)
+            product_totals[p.id] += qty
+            quantities.append(qty if qty else "")
+
+        try:
+            amount = float(payment.amount) if payment.amount else 0.0
+        except (ValueError, TypeError):
+            amount = 0.0
+        grand_total += amount
+
+        date_str = payment.submitted_at.strftime("%Y-%m-%d %H:%M") if payment.submitted_at else ""
+        writer.writerow(
+            [payment.payer_name, payment.child_name or ""]
+            + quantities
+            + [f"{amount:.2f}" if amount else "", date_str]
+        )
+
+    # Totals row
+    totals_row = (
+        ["TOTAL", ""]
+        + [product_totals[p.id] for p in products]
+        + [f"{grand_total:.2f}", ""]
+    )
+    writer.writerow(totals_row)
+
+
+def _write_fixed_csv(writer, payments):
+    """Simple name/student/amount table for fixed fundraisers."""
+    writer.writerow(["Nombre", "Estudiante", "Monto", "Estado", "Fecha"])
+
+    grand_total = 0.0
+
+    for payment in payments:
+        try:
+            amount = float(payment.amount) if payment.amount else 0.0
+        except (ValueError, TypeError):
+            amount = 0.0
+        grand_total += amount
+
+        status = "Confirmado" if payment.status == "confirmed" else (
+            "Por revisar" if payment.status == "flagged" else payment.status
+        )
+        date_str = payment.submitted_at.strftime("%Y-%m-%d %H:%M") if payment.submitted_at else ""
+        writer.writerow([
+            payment.payer_name,
+            payment.child_name or "",
+            f"{amount:.2f}" if amount else "",
+            status,
+            date_str,
+        ])
+
+    # Totals row
+    writer.writerow(["TOTAL", "", f"{grand_total:.2f}", "", ""])

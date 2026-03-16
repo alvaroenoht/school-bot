@@ -187,7 +187,7 @@ async def handle_command(
             wa.send_text(chat_id, f"⚠️ *{fund.name}* no tiene pagos registrados aún.")
             return True
 
-        _send_text_report(chat_id, fund, payments, db)
+        _send_csv_report(chat_id, fund, payments, db)
         return True
 
     # ── fundraiser subscribe <id> <phone> ─────────────────────────────────
@@ -398,56 +398,35 @@ async def handle_conversation(
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _send_text_report(chat_id: str, fund, payments, db):
-    """Send fundraiser report as formatted WhatsApp text messages."""
+def _send_csv_report(chat_id: str, fund, payments, db):
+    """Send fundraiser summary + CSV link (uploaded to S3)."""
+    from app.utils.fundraiser_report import generate_fundraiser_csv_url
+
     total_amount = sum(
         float(p.amount) for p in payments
         if p.amount and p.amount.replace(".", "").replace(",", "").isdigit()
     )
     confirmed = sum(1 for p in payments if p.status == "confirmed")
     flagged = sum(1 for p in payments if p.status == "flagged")
-
     type_label = f"Monto fijo: ${fund.fixed_amount}" if fund.type == "fixed" else "Catálogo"
-    header = (
-        f"\U0001f4ca *Reporte: {fund.name}*\n"
+
+    try:
+        csv_url = generate_fundraiser_csv_url(fund, payments, db)
+        url_line = f"\n📄 *Reporte CSV:*\n{csv_url}"
+    except Exception as e:
+        logger.error("CSV generation failed fundraiser_id=%d: %s", fund.id, e)
+        url_line = "\n_(Error al generar el CSV)_"
+
+    wa.send_text(
+        chat_id,
+        f"📊 *Reporte: {fund.name}*\n"
         f"{type_label} — {fund.status}\n\n"
         f"Total recaudado: *${total_amount:.2f}*\n"
         f"Pagos: {len(payments)} "
-        f"(\u2705 {confirmed} confirmados, \u26a0\ufe0f {flagged} por revisar)\n"
+        f"(✅ {confirmed} confirmados, ⚠️ {flagged} por revisar)\n"
         f"Cuenta: `{fund.account_number}`"
+        f"{url_line}",
     )
-    wa.send_text(chat_id, header)
-
-    # Send payments in chunks to avoid message length limits
-    chunk_lines = []
-    for i, p in enumerate(payments, 1):
-        status = "\u26a0\ufe0f" if p.status == "flagged" else "\u2705"
-        date_str = p.submitted_at.strftime("%d/%m %H:%M") if p.submitted_at else "—"
-        amount_str = f"${p.amount}" if p.amount else "—"
-
-        line = (
-            f"*{i}.* {status} {p.payer_name}\n"
-            f"    Estudiante: {p.child_name or '—'}\n"
-            f"    Monto: {amount_str} | Código: {p.confirmation_code or '—'}\n"
-            f"    Fecha: {date_str}"
-        )
-
-        # For variable fundraisers, include order items
-        if fund.type == "variable":
-            items = db.query(models.OrderItem).filter_by(payment_id=p.id).all()
-            if items:
-                order_text = ", ".join(f"{oi.quantity}x {oi.product.name}" for oi in items)
-                line += f"\n    Pedido: {order_text}"
-
-        chunk_lines.append(line)
-
-        # Send every 10 payments to avoid huge messages
-        if len(chunk_lines) == 10:
-            wa.send_text(chat_id, "\n\n".join(chunk_lines))
-            chunk_lines = []
-
-    if chunk_lines:
-        wa.send_text(chat_id, "\n\n".join(chunk_lines))
 
 
 _HELP = (
