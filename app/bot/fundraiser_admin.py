@@ -143,6 +143,28 @@ async def handle_command(
         wa.send_text(chat_id, f"🛑 Actividad *{fund.name}* cerrada.")
         return True
 
+    # ── fundraiser reopen <id> ────────────────────────────────────────────
+    if sub in ("reopen", "reabrir"):
+        fid = parts[2].strip() if len(parts) > 2 else ""
+        if not fid.isdigit():
+            wa.send_text(chat_id, "Uso: `/fundraiser reopen <id>`")
+            return True
+        fund = db.query(models.Fundraiser).get(int(fid))
+        if not fund:
+            wa.send_text(chat_id, f"❓ No encontré actividad con ID `{fid}`.")
+            return True
+        if not _check_fund_access(fund, caller_parent):
+            wa.send_text(chat_id, "❌ No tienes permiso para gestionar esa actividad.")
+            return True
+        if fund.status == "active":
+            wa.send_text(chat_id, f"ℹ️ *{fund.name}* ya está activa.")
+            return True
+        fund.status = "active"
+        fund.closed_at = None
+        db.commit()
+        wa.send_text(chat_id, f"✅ Actividad *{fund.name}* reactivada.")
+        return True
+
     # ── fundraiser delete <id> ────────────────────────────────────────────
     if sub == "delete" or sub == "eliminar":
         fid = parts[2].strip() if len(parts) > 2 else ""
@@ -434,6 +456,7 @@ _HELP = (
     "  `/fundraiser create <nombre>` \u2014 crear nueva\n"
     "  `/fundraiser list` \u2014 listar todas\n"
     "  `/fundraiser close <id>` \u2014 cerrar\n"
+    "  `/fundraiser reopen <id>` \u2014 reabrir\n"
     "  `/fundraiser delete <id>` \u2014 eliminar (sin pagos)\n"
     "  `/fundraiser report <id>` \u2014 reporte"
 )
