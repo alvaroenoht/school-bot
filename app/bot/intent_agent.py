@@ -262,12 +262,8 @@ def _append_assignment_lines(assignments, subjects: dict, lines: list) -> None:
 
         subj_name, subj_icon = subjects.get(a.subject_id, (f"Materia {a.subject_id}", "📘"))
         lines.append(f"  {subj_icon} {subj_name} — {a.title} ({a.type})")
-        if a.summary:
-            lines.append(f"    Resumen: {a.summary}")
         if a.description:
             desc = _strip_html(a.description)
-            if len(desc) > 200:
-                desc = desc[:200] + "..."
             lines.append(f"    Descripción: {desc}")
         if a.materials:
             lines.append(f"    🎒 Materiales: {a.materials}")
@@ -455,7 +451,7 @@ async def handle(
             tools=TOOLS,
             tool_choice="auto",
             temperature=0.3,
-            max_tokens=500,
+            max_completion_tokens=500,
         )
 
         message = response.choices[0].message
@@ -514,7 +510,7 @@ async def handle(
                     model=settings.openai_model,
                     messages=messages,
                     temperature=0.3,
-                    max_tokens=500,
+                    max_completion_tokens=500,
                 )
 
                 reply = followup.choices[0].message.content

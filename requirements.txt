@@ -33,3 +33,10 @@ beautifulsoup4==4.12.3
 
 # AWS (Textract receipt OCR)
 boto3==1.35.0
+
+# Excel report generation
+openpyxl>=3.1
+
+# iCal parsing (Google Calendar reminders)
+icalendar>=6.0
+recurring-ical-events>=3.0

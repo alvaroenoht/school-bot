@@ -102,6 +102,7 @@ def analyze_change(change: dict) -> dict:
             ],
             temperature=0.2,
             response_format={"type": "json_object"},
+            timeout=30,
         )
         result = json.loads(response.choices[0].message.content)
         return {
@@ -136,6 +137,7 @@ def analyze_materials(title: str, description: str) -> dict:
             ],
             temperature=0.2,
             response_format={"type": "json_object"},
+            timeout=30,
         )
         result_text = response.choices[0].message.content
         return json.loads(result_text)

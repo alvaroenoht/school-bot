@@ -71,6 +71,16 @@ def create_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # ── Google Calendar reminders ──────────────────────────────────────────────
+    cal_h, cal_m = settings.calendar_reminder_time.split(":")
+    scheduler.add_job(
+        _calendar_reminder_job,
+        CronTrigger(hour=int(cal_h), minute=int(cal_m), timezone=tz),
+        id="calendar_reminders",
+        name="Google Calendar reminders",
+        replace_existing=True,
+    )
+
     return scheduler
 
 
@@ -261,6 +271,19 @@ async def _db_backup_job():
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+async def _calendar_reminder_job():
+    """Run Google Calendar reminder checks in a thread pool."""
+    import asyncio
+    logger.info("⏰ Google Calendar reminders starting...")
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _run_in_new_loop, _do_calendar_reminders)
+
+
+async def _do_calendar_reminders():
+    from app.scheduler.calendar_reminders import send_calendar_reminders
+    await send_calendar_reminders()
 
 
 async def _sync_known_contact_groups_job():

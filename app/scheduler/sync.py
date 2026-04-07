@@ -162,8 +162,12 @@ async def run_sync(classroom_id: int | None = None):
                     except Exception as e:
                         logger.error(f"  Error processing assignment {item.get('asigId')}: {e}")
 
-                db.commit()
-                synced_student_ids.add(student.id)
+                try:
+                    db.commit()
+                    synced_student_ids.add(student.id)
+                except Exception as e:
+                    logger.error(f"  Commit failed for student {student.id}: {e}")
+                    db.rollback()
 
             logger.info(f"Sync complete for parent {parent.id}")
 
@@ -266,7 +270,7 @@ def _upsert_assignment(item: dict, student_id: int, client: SeducaClient, db) ->
         change_type = "updated"
         logger.debug(f"  Updated assignment {asig_id}")
     else:
-        db.add(models.Assignment(
+        db.merge(models.Assignment(
             id=asig_id,
             student_id=student_id,
             title=title,

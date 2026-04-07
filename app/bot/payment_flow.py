@@ -108,8 +108,34 @@ async def start_from_command(
                 elif existing.step in ("awaiting_order", "showing_catalog", "confirming_order"):
                     _send_catalog(chat_id, fundraiser, db)
                 return
+    # Save the interrupted session's state so it can be resumed later
+    interrupted_payment: dict | None = None
+    if existing and existing.flow == "payment":
+        existing_fid = (existing.data or {}).get("fundraiser_id")
+        if existing_fid != fundraiser.id:
+            resumable = {
+                "awaiting_receipt", "awaiting_manual_amount", "awaiting_manual_code",
+                "awaiting_confirmation", "awaiting_order", "confirming_order",
+            }
+            if existing.step in resumable:
+                interrupted_payment = {
+                    "step": existing.step,
+                    "data": dict(existing.data or {}),
+                }
+
+    if existing:
         db.delete(existing)
         db.flush()
+
+    # Carry the interrupted payment into the new session's data
+    if interrupted_payment:
+        data["_interrupted_payment"] = interrupted_payment
+        int_name = (interrupted_payment.get("data") or {}).get("fundraiser_name", "otra actividad")
+        wa.send_text(
+            chat_id,
+            f"⏸️ Pausando el pago de *{int_name}*. "
+            f"Lo podrás retomar cuando termines con *{fundraiser.name}*.",
+        )
 
     # Child selection
     if len(children) > 1:
@@ -502,7 +528,17 @@ async def _finalize_payment(
             subtotal=item.get("subtotal", "0"),
         ))
 
+    # Restore interrupted payment session (if any) before committing
+    interrupted = data.pop("_interrupted_payment", None)
     db.delete(session)
+    if interrupted:
+        restored = models.ConversationSession(
+            chat_jid=raw_jid,
+            flow="payment",
+            step=interrupted["step"],
+            data=interrupted["data"],
+        )
+        db.add(restored)
     db.commit()
 
     status_icon = "\u26a0\ufe0f" if flagged else "\u2705"
@@ -549,6 +585,14 @@ async def _finalize_payment(
             )
     except Exception as e:
         logger.warning(f"Could not notify subscribers of payment: {e}")
+
+    if interrupted:
+        int_name = (interrupted.get("data") or {}).get("fundraiser_name", "otra actividad")
+        wa.send_text(
+            chat_id,
+            f"▶️ Tienes un pago pendiente para *{int_name}*.\n"
+            f"Escribe `/pagar {int_name}` para retomarlo.",
+        )
 
 
 # ── Session helpers ────────────────────────────────────────────────────────────

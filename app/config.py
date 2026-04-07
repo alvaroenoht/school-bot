@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     summary_time: str = "18:30"        # HH:MM
     reminder_time: str = "07:00"       # HH:MM  Mon-Fri
 
+    # ── Google Calendar reminders ──────────────────────────────────────────
+    calendar_reminder_time: str = "06:00"  # HH:MM daily job time
+
     # ── AWS (Textract for receipt OCR + S3 for PDF reports) ─────────────────
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""

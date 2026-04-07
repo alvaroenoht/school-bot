@@ -422,7 +422,7 @@ async def handle_conversation(
 
 def _send_csv_report(chat_id: str, fund, payments, db):
     """Send fundraiser summary + CSV link (uploaded to S3)."""
-    from app.utils.fundraiser_report import generate_fundraiser_csv_url
+    from app.utils.fundraiser_report import generate_fundraiser_excel_url
 
     total_amount = sum(
         float(p.amount) for p in payments
@@ -433,11 +433,11 @@ def _send_csv_report(chat_id: str, fund, payments, db):
     type_label = f"Monto fijo: ${fund.fixed_amount}" if fund.type == "fixed" else "Catálogo"
 
     try:
-        csv_url = generate_fundraiser_csv_url(fund, payments, db)
-        url_line = f"\n📄 *Reporte CSV:*\n{csv_url}"
+        excel_url = generate_fundraiser_excel_url(fund, payments, db)
+        url_line = f"\n📊 *Reporte Excel:*\n{excel_url}"
     except Exception as e:
-        logger.error("CSV generation failed fundraiser_id=%d: %s", fund.id, e)
-        url_line = "\n_(Error al generar el CSV)_"
+        logger.error("Excel generation failed fundraiser_id=%d: %s", fund.id, e)
+        url_line = "\n_(Error al generar el Excel)_"
 
     wa.send_text(
         chat_id,

@@ -2,13 +2,18 @@
 Summary and reminder senders — called by APScheduler jobs.
 """
 import logging
+import os
+import tempfile
 from datetime import datetime, timedelta
 
 import pytz
 
 from app.db.database import SessionLocal
 from app.db import models
-from app.utils.summary_formatter import generate_weekly_summary
+from app.utils.summary_formatter import generate_weekly_summary, generate_weekly_data
+from app.utils.pdf_generator import create_weekly_pdf
+from app.utils.s3_upload import upload_file_to_s3, generate_presigned_url
+from app.utils.helpers import shorten_url
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -47,13 +52,50 @@ async def send_weekly_summaries():
                 continue
 
             for student_id in [student.id]:
-                # Text summary
                 raw_conn = db.connection().connection.dbapi_connection
+
+                # Text summary
                 message = generate_weekly_summary(raw_conn, student_id, start, end)
                 if message:
                     wa.send_text(classroom.whatsapp_group_id, message)
                 else:
                     logger.warning(f"No assignments for student {student_id} in week {start}–{end}")
+                    continue
+
+                # PDF generation + S3 upload
+                try:
+                    bot_status = db.query(models.BotStatus).first()
+                    last_sync_str = None
+                    if bot_status and bot_status.last_sync_at:
+                        tz_obj = pytz.timezone("America/Panama")
+                        local_dt = bot_status.last_sync_at.replace(tzinfo=pytz.utc).astimezone(tz_obj)
+                        last_sync_str = local_dt.strftime("%d/%m/%Y %H:%M")
+
+                    data_by_day = generate_weekly_data(raw_conn, student_id, start, end)
+                    has_data = any(
+                        data_by_day.get(day, {}).get("sumativas") or data_by_day.get(day, {}).get("materials")
+                        for day in data_by_day
+                    )
+                    if not has_data:
+                        continue
+
+                    class_label = classroom.name if classroom.name else f"salon_{classroom.id}"
+
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        filename = f"resumen_{class_label}_{start.strftime('%d%m')}.pdf"
+                        pdf_path = os.path.join(tmpdir, filename)
+                        create_weekly_pdf(data_by_day, pdf_path, week_dates, last_sync_at=last_sync_str)
+
+                        s3_key = f"resumenes/{start.strftime('%Y-%m-%d')}/{filename}"
+                        upload_file_to_s3(pdf_path, s3_key)
+                        presigned = generate_presigned_url(s3_key)
+                        short_url = shorten_url(presigned)
+                        wa.send_text(
+                            classroom.whatsapp_group_id,
+                            f"📄 *PDF de {class_label}:*\n{short_url}",
+                        )
+                except Exception as e:
+                    logger.error(f"PDF generation/upload failed for student {student_id}: {e}")
 
     finally:
         db.close()

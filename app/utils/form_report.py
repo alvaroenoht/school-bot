@@ -3,10 +3,9 @@ form_report.py — report utilities for form results.
 
 Functions:
     send_form_report()        — verbose per-question breakdown (existing /form results)
-    send_form_summary()       — compact summary + CSV link (/form report)
+    send_form_summary()       — compact summary + Excel link (/form report)
     form_ai_analysis()        — LLM analysis of submitted answers (/form ai)
 """
-import csv
 import io
 import logging
 import os
@@ -51,10 +50,13 @@ _PURPOSE_LABELS = {
 _STATUS_ICONS = {"draft": "📝", "open": "✅", "closed": "🔒", "archived": "🗄️"}
 
 
-# ── CSV export ─────────────────────────────────────────────────────────────────
+# ── Excel export ───────────────────────────────────────────────────────────────
 
-def _generate_csv_url(form: models.Form, db: Session) -> str:
-    """Build CSV from all submissions, upload to S3, return shortened URL."""
+def _generate_excel_url(form: models.Form, db: Session) -> str:
+    """Build Excel workbook from all submissions, upload to S3, return shortened URL."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
     from app.utils.s3_upload import upload_file_to_s3, generate_presigned_url
     from app.utils.helpers import shorten_url
 
@@ -66,16 +68,23 @@ def _generate_csv_url(form: models.Form, db: Session) -> str:
     )
     submissions = db.query(models.FormSubmission).filter_by(form_id=form.id).all()
 
-    output = io.StringIO()
-    writer = csv.writer(output)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Respuestas"
+
+    header_fill = PatternFill("solid", fgColor="1F4E79")
+    header_font = Font(color="FFFFFF", bold=True)
 
     # Header row
-    header = ["nombre", "estado", "enviado_at", "iniciado_at"]
+    headers = ["Nombre", "Estado", "Enviado", "Iniciado"]
     for q in questions:
-        # Truncate long question text for the column header
-        label = q.text[:60].replace("\n", " ")
-        header.append(label)
-    writer.writerow(header)
+        headers.append(q.text[:60].replace("\n", " "))
+    ws.append(headers)
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
 
     # One row per submission
     for sub in submissions:
@@ -96,17 +105,24 @@ def _generate_csv_url(form: models.Form, db: Session) -> str:
             elif val == "no":
                 val = "No"
             row.append(val or "")
-        writer.writerow(row)
+        ws.append(row)
 
-    content = output.getvalue().encode("utf-8-sig")  # BOM for Excel
+    # Auto-fit columns
+    for col in ws.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=8)
+        ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 50)
 
-    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+    buf = io.BytesIO()
+    wb.save(buf)
+    content = buf.getvalue()
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
         f.write(content)
         tmp_path = f.name
 
     try:
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        s3_key = f"forms/form_{form.id}_{timestamp}.csv"
+        s3_key = f"forms/form_{form.id}_{timestamp}.xlsx"
         upload_file_to_s3(tmp_path, s3_key)
         presigned = generate_presigned_url(s3_key)
         return shorten_url(presigned)
@@ -159,13 +175,13 @@ def send_form_summary(form: models.Form, chat_id: str, db: Session):
         wa.send_text(chat_id, "\n".join(msg_lines))
         return
 
-    # Generate CSV and append link
+    # Generate Excel and append link
     try:
-        csv_url = _generate_csv_url(form, db)
-        msg_lines.append(f"\n📄 *CSV completo:*\n{csv_url}")
+        excel_url = _generate_excel_url(form, db)
+        msg_lines.append(f"\n📊 *Excel completo:*\n{excel_url}")
     except Exception as e:
-        logger.error("CSV generation failed form_id=%d: %s", form.id, e)
-        msg_lines.append("\n_(Error al generar CSV)_")
+        logger.error("Excel generation failed form_id=%d: %s", form.id, e)
+        msg_lines.append("\n_(Error al generar Excel)_")
 
     wa.send_text(chat_id, "\n".join(msg_lines))
     logger.info("FORM summary sent form_id=%d submitted=%d", form.id, submitted)
@@ -273,7 +289,7 @@ async def form_ai_analysis(form: models.Form, question: str, chat_id: str, db: S
             },
         ],
         temperature=0.2,
-        max_tokens=3000,
+        max_completion_tokens=3000,
     )
 
     reply = response.choices[0].message.content

@@ -354,6 +354,17 @@ class FormAnswer(Base):
     question   = relationship("FormQuestion",   back_populates="answers")
 
 
+class CalendarSubscription(Base):
+    """Maps a Google Calendar iCal URL to a WhatsApp group that receives reminders."""
+    __tablename__ = "calendar_subscriptions"
+
+    id                  = Column(Integer, primary_key=True)
+    ical_url            = Column(String, nullable=False)
+    whatsapp_group_id   = Column(String, nullable=False)  # group JID e.g. XXXX@g.us
+    label               = Column(String, nullable=True)   # human-readable name, optional
+    created_at          = Column(DateTime, default=datetime.utcnow)
+
+
 class BotStatus(Base):
     """Singleton row tracking bot state: last sync time + optional maintenance message."""
     __tablename__ = "bot_status"
