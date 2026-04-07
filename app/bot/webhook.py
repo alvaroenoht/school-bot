@@ -285,7 +285,17 @@ async def whatsapp_webhook(request: Request):
             )
             return {"status": "ok"}
 
-        # 4. Registered active parent \u2014 commands, "pay/pagar", or Q&A
+        # 4. Valid invite code - start registration before contact classification
+        if raw_text:
+            code = raw_text.strip().upper()
+            invite = db.query(models.InviteCode).filter_by(code=code, status="active").first()
+            if invite:
+                await registration.handle(
+                    raw_jid, chat_id, raw_text, db, None, invite=invite, message_id=message_id,
+                )
+                return {"status": "ok"}
+
+        # 5. Registered active parent \u2014 commands, "pay/pagar", or Q&A
         parent = db.query(models.Parent).filter_by(
             whatsapp_jid=raw_jid, is_active=True
         ).first()
@@ -325,7 +335,7 @@ async def whatsapp_webhook(request: Request):
                 )
             return {"status": "ok"}
 
-        # 5. Known contact \u2014 FORM code, "pay/pagar", or brief help
+        # 6. Known contact \u2014 FORM code, "pay/pagar", or brief help
         contact = db.query(models.KnownContact).filter_by(jid=raw_jid).first()
         if contact:
             if raw_text and raw_text.strip().upper().startswith("FORM-"):
@@ -341,7 +351,7 @@ async def whatsapp_webhook(request: Request):
                 )
             return {"status": "ok"}
 
-        # 6. Unknown sender \u2014 valid invite code?
+        # 7. Unknown sender \u2014 valid invite code?
         if raw_text:
             code = raw_text.strip().upper()
             invite = db.query(models.InviteCode).filter_by(code=code, status="active").first()
@@ -387,7 +397,7 @@ async def whatsapp_webhook(request: Request):
                         )
                     return {"status": "ok"}
 
-        # 7. Unknown sender \u2014 check group membership
+        # 8. Unknown sender \u2014 check group membership
         group_id = _check_group_membership(raw_jid, db, wa)
         if group_id:
             pending = raw_text if _is_pay_command(raw_text) else None
