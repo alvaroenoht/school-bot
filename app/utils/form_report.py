@@ -24,6 +24,25 @@ logger = logging.getLogger(__name__)
 wa = WahaClient()
 
 
+def _normalize_jid(jid: str | None) -> str:
+    if not jid:
+        return ""
+    return jid.split("@", 1)[0].lstrip("+")
+
+
+def _get_submission_student_name(submission: models.FormSubmission, db: Session) -> str:
+    if submission.student_id:
+        student = submission.student or db.query(models.Student).get(submission.student_id)
+        if student:
+            return student.name
+
+    normalized_jid = _normalize_jid(submission.respondent_jid)
+    for contact in db.query(models.KnownContact).all():
+        if _normalize_jid(contact.jid) == normalized_jid:
+            return contact.child_name or ""
+    return ""
+
+
 def _parents_in_audience(classroom_ids: list[int], db: Session) -> list[models.Parent]:
     """Active registered parents with at least one student in the given classrooms."""
     if not classroom_ids:
@@ -76,7 +95,7 @@ def _generate_excel_url(form: models.Form, db: Session) -> str:
     header_font = Font(color="FFFFFF", bold=True)
 
     # Header row
-    headers = ["Nombre", "Estado", "Enviado", "Iniciado"]
+    headers = ["Padre/Madre", "Estudiante", "Estado", "Enviado", "Iniciado"]
     for q in questions:
         headers.append(q.text[:60].replace("\n", " "))
     ws.append(headers)
@@ -92,8 +111,10 @@ def _generate_excel_url(form: models.Form, db: Session) -> str:
             a.question_id: a.value
             for a in db.query(models.FormAnswer).filter_by(submission_id=sub.id).all()
         }
+        student_name = _get_submission_student_name(sub, db)
         row = [
             sub.respondent_name,
+            student_name,
             sub.status,
             sub.submitted_at.strftime("%Y-%m-%d %H:%M") if sub.submitted_at else "",
             sub.started_at.strftime("%Y-%m-%d %H:%M") if sub.started_at else "",

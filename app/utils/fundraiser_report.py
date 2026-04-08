@@ -86,29 +86,84 @@ def _autofit(ws):
         ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 40)
 
 
-def _get_student_classroom(payment, db) -> str:
-    """Get the classroom name for a payment's child."""
+def _normalize_jid(jid: str | None) -> str:
+    if not jid:
+        return ""
+    return jid.split("@", 1)[0].lstrip("+")
+
+
+def _get_classroom_name(classroom_id: int | None, db: Session) -> str:
+    if not classroom_id:
+        return ""
+    classroom = db.query(models.Classroom).get(classroom_id)
+    return classroom.name if classroom else ""
+
+
+def _find_parent_by_jid(jid: str, db: Session) -> models.Parent | None:
+    normalized_jid = _normalize_jid(jid)
+    for parent in db.query(models.Parent).filter(models.Parent.is_active == True).all():
+        if _normalize_jid(parent.whatsapp_jid) == normalized_jid:
+            return parent
+    return None
+
+
+def _find_known_contact_by_jid(jid: str, db: Session) -> models.KnownContact | None:
+    normalized_jid = _normalize_jid(jid)
+    for contact in db.query(models.KnownContact).all():
+        if _normalize_jid(contact.jid) == normalized_jid:
+            return contact
+    return None
+
+
+def _get_payment_group_name(payment: models.Payment, fundraiser: models.Fundraiser, db: Session) -> str:
+    """Resolve the most relevant classroom/group name for a payment."""
     try:
-        # Find the parent by WhatsApp JID
-        parent = db.query(models.Parent).filter_by(whatsapp_jid=payment.payer_jid).first()
-        if not parent:
-            return ""
+        parent = _find_parent_by_jid(payment.payer_jid, db)
+        if parent:
+            student = (
+                db.query(models.Student)
+                .filter_by(parent_id=parent.id)
+                .filter(models.Student.name.ilike(payment.child_name or ""))
+                .first()
+            )
+            if student and student.classroom_id:
+                return _get_classroom_name(student.classroom_id, db)
 
-        # Find the student by name and parent
-        student = (
-            db.query(models.Student)
-            .filter_by(parent_id=parent.id)
-            .filter(models.Student.name.ilike(payment.child_name))
-            .first()
-        )
-        if not student or not student.classroom_id:
-            return ""
+        contact = _find_known_contact_by_jid(payment.payer_jid, db)
+        if contact:
+            query = db.query(models.KnownContactGroup).filter_by(
+                contact_jid=contact.jid,
+                active=True,
+            )
+            if fundraiser.audience_classroom_ids:
+                query = query.filter(
+                    models.KnownContactGroup.classroom_id.in_(fundraiser.audience_classroom_ids)
+                )
+            group_names = [
+                name
+                for name in (
+                    _get_classroom_name(group.classroom_id, db)
+                    for group in query.order_by(models.KnownContactGroup.classroom_id).all()
+                )
+                if name
+            ]
+            if group_names:
+                return ", ".join(group_names)
 
-        # Get the classroom
-        classroom = db.query(models.Classroom).get(student.classroom_id)
-        return classroom.name if classroom else ""
+        if fundraiser.audience_classroom_ids and len(fundraiser.audience_classroom_ids) == 1:
+            return _get_classroom_name(fundraiser.audience_classroom_ids[0], db)
+
+        return ""
     except Exception:
         return ""
+
+
+def _get_student_classroom(payment, db) -> str:
+    """Backward-compatible wrapper used by the Excel row builders."""
+    fundraiser = payment.fundraiser or db.query(models.Fundraiser).get(payment.fundraiser_id)
+    if not fundraiser:
+        return ""
+    return _get_payment_group_name(payment, fundraiser, db)
 
 
 def _write_variable(ws, fundraiser, payments, db):

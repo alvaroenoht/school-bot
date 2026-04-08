@@ -430,6 +430,7 @@ def _send_csv_report(chat_id: str, fund, payments, db):
     )
     confirmed = sum(1 for p in payments if p.status == "confirmed")
     flagged = sum(1 for p in payments if p.status == "flagged")
+    group_label = _format_fundraiser_groups(fund, db)
     type_label = f"Monto fijo: ${fund.fixed_amount}" if fund.type == "fixed" else "Catálogo"
 
     try:
@@ -443,12 +444,24 @@ def _send_csv_report(chat_id: str, fund, payments, db):
         chat_id,
         f"📊 *Reporte: {fund.name}*\n"
         f"{type_label} — {fund.status}\n\n"
+        f"Grupos: {group_label}\n"
         f"Total recaudado: *${total_amount:.2f}*\n"
         f"Pagos: {len(payments)} "
         f"(✅ {confirmed} confirmados, ⚠️ {flagged} por revisar)\n"
         f"Cuenta: `{fund.account_number}`"
         f"{url_line}",
     )
+
+
+def _format_fundraiser_groups(fund, db: Session) -> str:
+    classroom_ids = fund.audience_classroom_ids or []
+    if not classroom_ids:
+        return "Todos"
+
+    classrooms = db.query(models.Classroom).filter(models.Classroom.id.in_(classroom_ids)).all()
+    names_by_id = {classroom.id: classroom.name for classroom in classrooms}
+    names = [names_by_id.get(classroom_id, str(classroom_id)) for classroom_id in classroom_ids]
+    return ", ".join(names) if names else "Todos"
 
 
 _HELP = (
