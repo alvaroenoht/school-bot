@@ -64,7 +64,7 @@ def _build_excel(
     if fundraiser.type == "variable":
         _write_variable(ws, fundraiser, payments, db)
     else:
-        _write_fixed(ws, payments)
+        _write_fixed(ws, payments, db)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -86,6 +86,31 @@ def _autofit(ws):
         ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 40)
 
 
+def _get_student_classroom(payment, db) -> str:
+    """Get the classroom name for a payment's child."""
+    try:
+        # Find the parent by WhatsApp JID
+        parent = db.query(models.Parent).filter_by(whatsapp_jid=payment.payer_jid).first()
+        if not parent:
+            return ""
+
+        # Find the student by name and parent
+        student = (
+            db.query(models.Student)
+            .filter_by(parent_id=parent.id)
+            .filter(models.Student.name.ilike(payment.child_name))
+            .first()
+        )
+        if not student or not student.classroom_id:
+            return ""
+
+        # Get the classroom
+        classroom = db.query(models.Classroom).get(student.classroom_id)
+        return classroom.name if classroom else ""
+    except Exception:
+        return ""
+
+
 def _write_variable(ws, fundraiser, payments, db):
     """One column per product; quantities per payer; totals row at bottom."""
     products = (
@@ -104,7 +129,7 @@ def _write_variable(ws, fundraiser, payments, db):
     for item in all_items:
         items_by_payment.setdefault(item.payment_id, {})[item.product_id] = item.quantity
 
-    headers = ["Nombre", "Estudiante"] + [p.name for p in products] + ["Total ($)", "Fecha"]
+    headers = ["Nombre", "Estudiante", "Salón"] + [p.name for p in products] + ["Total ($)", "Fecha"]
     _apply_header(ws, headers)
 
     product_totals = {p.id: 0 for p in products}
@@ -124,16 +149,17 @@ def _write_variable(ws, fundraiser, payments, db):
             amount = 0.0
         grand_total += amount
 
+        classroom_name = _get_student_classroom(payment, db)
         date_str = payment.submitted_at.strftime("%Y-%m-%d %H:%M") if payment.submitted_at else ""
         ws.append(
-            [payment.payer_name, payment.child_name or ""]
+            [payment.payer_name, payment.child_name or "", classroom_name]
             + quantities
             + [round(amount, 2) if amount else "", date_str]
         )
 
     # Totals row
     totals_row = (
-        ["TOTAL", ""]
+        ["TOTAL", "", ""]
         + [product_totals[p.id] for p in products]
         + [round(grand_total, 2), ""]
     )
@@ -147,9 +173,9 @@ def _write_variable(ws, fundraiser, payments, db):
     _autofit(ws)
 
 
-def _write_fixed(ws, payments):
+def _write_fixed(ws, payments, db):
     """Simple name/student/amount table for fixed fundraisers."""
-    _apply_header(ws, ["Nombre", "Estudiante", "Monto ($)", "Estado", "Fecha"])
+    _apply_header(ws, ["Nombre", "Estudiante", "Salón", "Monto ($)", "Estado", "Fecha"])
 
     grand_total = 0.0
 
@@ -160,6 +186,7 @@ def _write_fixed(ws, payments):
             amount = 0.0
         grand_total += amount
 
+        classroom_name = _get_student_classroom(payment, db)
         status = "Confirmado" if payment.status == "confirmed" else (
             "Por revisar" if payment.status == "flagged" else payment.status
         )
@@ -167,15 +194,16 @@ def _write_fixed(ws, payments):
         ws.append([
             payment.payer_name,
             payment.child_name or "",
+            classroom_name,
             round(amount, 2) if amount else "",
             status,
             date_str,
         ])
 
     # Totals row
-    ws.append(["TOTAL", "", round(grand_total, 2), "", ""])
+    ws.append(["TOTAL", "", "", round(grand_total, 2), "", ""])
     total_row_idx = ws.max_row
-    for col_idx in range(1, 6):
+    for col_idx in range(1, 7):
         cell = ws.cell(row=total_row_idx, column=col_idx)
         cell.font = _TOTAL_FONT
         cell.fill = _TOTAL_FILL
