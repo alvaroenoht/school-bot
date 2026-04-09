@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.bot.webhook import router as webhook_router
+from app.api.admin import admin_router
 from app.db.database import engine
 from app.db.models import Base
 from app.scheduler.jobs import create_scheduler
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SchoolBot", version="2.0.0", lifespan=lifespan)
 app.include_router(webhook_router)
+app.include_router(admin_router, prefix="/api/admin")
 
 
 @app.get("/health")

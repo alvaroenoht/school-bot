@@ -26,6 +26,16 @@ services:
     networks:
       - schoolbot-net
 
+  # ── Admin Panel (Next.js) ───────────────────────────────────────────────────
+  admin-panel:
+    build: ./admin-panel
+    container_name: admin-panel
+    restart: unless-stopped
+    networks:
+      - schoolbot-net
+    depends_on:
+      - schoolbot
+
   # ── WhatsApp gateway (waha) ───────────────────────────────────────────────────
   # Docs: https://waha.devlike.pro
   waha:
@@ -74,6 +84,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "5005:5005"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-data:/data
