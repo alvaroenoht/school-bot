@@ -31,6 +31,8 @@ services:
     build: ./admin-panel
     container_name: admin-panel
     restart: unless-stopped
+    ports:
+      - "3001:3000"
     networks:
       - schoolbot-net
     depends_on:

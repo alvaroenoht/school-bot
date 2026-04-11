@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -22,81 +23,91 @@ class FundraiserCreate(BaseModel):
     audience_classroom_ids: List[int]
     products: Optional[List[ProductSchema]] = None
 
+class FundraiserUpdate(BaseModel):
+    status: Optional[str] = None # active | closed
+    name: Optional[str] = None
+    audience_classroom_ids: Optional[List[int]] = None
+
 @router.post("/")
-async def create_fundraiser(
-    req: FundraiserCreate,
-    db: Session = Depends(get_db),
-    admin: dict = Depends(get_current_admin)
-):
-    """Create a new fundraiser activity."""
-    # Auth check: must manage these classrooms
+async def create_fundraiser(req: FundraiserCreate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
     if not admin["is_super_admin"]:
         my_classrooms = [r["classroom_id"] for r in admin["roles"]]
         if any(cid not in my_classrooms for cid in req.audience_classroom_ids):
-            raise HTTPException(status_code=403, detail="Cannot target classrooms you don't manage.")
+            raise HTTPException(status_code=403, detail="Not authorized")
 
-    # 1. Create Fundraiser
     db_fund = models.Fundraiser(
-        name=req.name,
-        account_number=req.account_number,
-        type=req.type,
-        fixed_amount=req.fixed_amount,
-        audience_classroom_ids=req.audience_classroom_ids,
-        created_by_jid=admin["phone"] + "@c.us",
-        status="active"
+        name=req.name, account_number=req.account_number, type=req.type,
+        fixed_amount=req.fixed_amount, audience_classroom_ids=req.audience_classroom_ids,
+        created_by_jid=admin["phone"] + "@c.us", status="active"
     )
     db.add(db_fund)
     db.flush()
-
-    # 2. Add Products if variable
     if req.type == "variable" and req.products:
         for idx, p in enumerate(req.products):
-            db_p = models.FundraiserProduct(
-                fundraiser_id=db_fund.id,
-                name=p.name,
-                price=p.price,
-                sort_order=idx
-            )
-            db.add(db_p)
-
+            db.add(models.FundraiserProduct(fundraiser_id=db_fund.id, name=p.name, price=p.price, sort_order=idx))
     db.commit()
     return {"id": db_fund.id, "status": "active"}
 
+@router.post("/{fundraiser_id}/remind")
+async def remind_unpaid(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
+    if not fund: raise HTTPException(status_code=404)
+    
+    # 1. Get all targeted JIDs
+    target_jids = set()
+    for cid in (fund.audience_classroom_ids or []):
+        parents = db.query(models.Parent).filter_by(classroom_id=cid).all()
+        for p in parents: target_jids.add(p.whatsapp_jid)
+    
+    # 2. Get JIDs who already paid
+    paid_jids = {p.payer_jid for p in fund.payments if p.status in ('confirmed', 'pending')}
+    unpaid_jids = target_jids - paid_jids
+    
+    # 3. Send WhatsApp
+    msg = f"🔔 *Recordatorio: {fund.name}*\n\nAún no recibimos tu pago. Si ya lo hiciste, envía tu comprobante escribiendo *pagar*."
+    for jid in unpaid_jids:
+        wa.send_text(jid, msg)
+        
+    return {"sent_count": len(unpaid_jids)}
+
 @router.get("/")
-async def list_fundraisers(
-    classroom_id: Optional[int] = None,
-    db: Session = Depends(get_db),
-    admin: dict = Depends(get_current_admin)
-):
-    query = db.query(models.Fundraiser)
-    if admin["is_super_admin"]:
-        if classroom_id:
-            query = query.filter(models.Fundraiser.audience_classroom_ids.contains([classroom_id]))
-        return query.all()
+async def list_fundraisers(db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    return db.query(models.Fundraiser).all()
 
-    my_classrooms = [r["classroom_id"] for r in admin["roles"]]
-    # Logic to filter by overlapping classroom IDs in JSON column
-    # For now, return all for simplicity in preview, but filter in production
-    return query.all()
+@router.get("/{fundraiser_id}/report")
+async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
+    if not fund: raise HTTPException(status_code=404)
+    payments = db.query(models.Payment).filter_by(fundraiser_id=fundraiser_id).all()
+    return {
+        "id": fund.id, "name": fund.name, "status": fund.status, "type": fund.type,
+        "payments": [{"id": p.id, "parent": p.payer_name, "child": p.child_name, "amount": p.amount, "status": p.status, "date": p.submitted_at} for p in payments]
+    }
 
-@router.get("/{fundraiser_id}/payments")
-async def get_payments(
-    fundraiser_id: int,
-    status: Optional[str] = None,
-    db: Session = Depends(get_db),
-    admin: dict = Depends(get_current_admin)
-):
-    return db.query(models.Payment).filter_by(fundraiser_id=fundraiser_id).all()
+@router.patch("/{fundraiser_id}")
+async def update_fundraiser(fundraiser_id: int, req: FundraiserUpdate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
+    if not fund: raise HTTPException(status_code=404)
 
-@router.post("/payments/{payment_id}/confirm")
-async def confirm_payment(
-    payment_id: int,
-    db: Session = Depends(get_db),
-    admin: dict = Depends(get_current_admin)
-):
-    payment = db.query(models.Payment).filter_by(id=payment_id).first()
-    if not payment: raise HTTPException(status_code=404)
-    payment.status = "confirmed"
+    if req.status:
+        fund.status = req.status
+        if req.status == "closed": fund.closed_at = datetime.utcnow()
+    if req.name: fund.name = req.name
+    if req.audience_classroom_ids is not None: fund.audience_classroom_ids = req.audience_classroom_ids
+
     db.commit()
-    wa.send_text(payment.payer_jid, f"✅ *Pago Confirmado*\n\nTu pago para *{payment.fundraiser.name}* ha sido verificado.")
-    return {"status": "confirmed"}
+    return {"status": "updated"}
+
+@router.delete("/{fundraiser_id}")
+async def delete_fundraiser(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
+    if not fund: raise HTTPException(status_code=404)
+
+    # Only delete if no payments exist
+    payment_count = db.query(models.Payment).filter_by(fundraiser_id=fundraiser_id).count()
+    if payment_count > 0:
+        raise HTTPException(status_code=400, detail="Cannot delete fundraiser with existing payments")
+
+    db.delete(fund)
+    db.commit()
+    return {"status": "deleted"}

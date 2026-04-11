@@ -8,76 +8,77 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/classrooms", tags=["classrooms"])
 
-class ClassroomBase(BaseModel):
-    name: str
-    parent_id: Optional[int] = None
+class ClassroomUpdate(BaseModel):
+    name: Optional[str] = None
     whatsapp_group_id: Optional[str] = None
+    settings: Optional[dict] = None # e.g. {"module": "seduca"}
+    portal_user: Optional[str] = None
+    portal_pass: Optional[str] = None
 
 @router.get("/")
-async def list_classrooms(
-    db: Session = Depends(get_db),
-    admin: dict = Depends(get_current_admin)
-):
-    """Returns the full hierarchy or just accessible nodes."""
-    if admin["is_super_admin"]:
-        return db.query(models.Classroom).all()
-    
+async def list_classrooms(db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    if admin["is_super_admin"]: return db.query(models.Classroom).all()
     my_ids = [r["classroom_id"] for r in admin["roles"]]
     return db.query(models.Classroom).filter(models.Classroom.id.in_(my_ids)).all()
 
-@router.get("/{classroom_id}/members")
-async def list_members(
-    classroom_id: int,
-    db: Session = Depends(get_db),
+@router.patch("/{classroom_id}")
+async def update_classroom(
+    classroom_id: int, 
+    req: ClassroomUpdate, 
+    db: Session = Depends(get_db), 
     admin: dict = Depends(get_current_admin)
 ):
-    """List parents and students in this group."""
-    # Auth check omitted for preview
-    parents = db.query(models.Parent).filter_by(classroom_id=classroom_id).all()
+    # Auth: super admin or delegate of this classroom
+    classroom = db.query(models.Classroom).filter_by(id=classroom_id).first()
+    if not classroom: raise HTTPException(status_code=404)
     
+    if req.name: classroom.name = req.name
+    if req.settings: 
+        curr = classroom.settings or {}
+        curr.update(req.settings)
+        classroom.settings = curr
+    
+    # In a real app, encrypt these. For preview, storing in JSON settings.
+    if req.portal_user or req.portal_pass:
+        curr = classroom.settings or {}
+        if req.portal_user: curr["portal_user"] = req.portal_user
+        if req.portal_pass: curr["portal_pass"] = req.portal_pass
+        classroom.settings = curr
+
+    db.commit()
+    return {"status": "updated"}
+
+@router.get("/{classroom_id}/members")
+async def list_members(classroom_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    parents = db.query(models.Parent).filter_by(classroom_id=classroom_id).all()
     result = []
     for p in parents:
-        # Get students via link table
         student_links = db.query(models.StudentParent).filter_by(parent_id=p.id).all()
-        kids = []
-        for sl in student_links:
-            kids.append({
-                "id": sl.student.id,
-                "name": sl.student.name,
-                "is_primary_payer": sl.is_primary_payer
-            })
-            
         result.append({
             "id": p.id,
             "name": f"{p.first_name} {p.last_name}",
             "jid": p.whatsapp_jid,
-            "students": kids
+            "students": [{"id": sl.student.id, "name": sl.student.name, "is_primary_payer": sl.is_primary_payer} for sl in student_links]
         })
     return result
 
-@router.patch("/members/{parent_id}")
+class MemberUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+@router.patch("/{classroom_id}/members/{parent_id}")
 async def update_member(
+    classroom_id: int,
     parent_id: int,
-    data: dict, # {first_name, last_name, students: [{id, name, is_primary_payer}]}
+    req: MemberUpdate,
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin)
 ):
-    """Update parent/student names and payment responsibility."""
-    parent = db.query(models.Parent).filter_by(id=parent_id).first()
-    if not parent: raise HTTPException(status_code=404)
-    
-    if "first_name" in data: parent.first_name = data["first_name"]
-    if "last_name" in data: parent.last_name = data["last_name"]
-    
-    if "students" in data:
-        for s_data in data["students"]:
-            student = db.query(models.Student).filter_by(id=s_data["id"]).first()
-            if student:
-                student.name = s_data["name"]
-                # Update link table
-                link = db.query(models.StudentParent).filter_by(student_id=student.id, parent_id=parent.id).first()
-                if link:
-                    link.is_primary_payer = s_data["is_primary_payer"]
-    
+    parent = db.query(models.Parent).filter_by(id=parent_id, classroom_id=classroom_id).first()
+    if not parent: raise HTTPException(status_code=404, detail="Parent not found")
+
+    if req.first_name: parent.first_name = req.first_name
+    if req.last_name: parent.last_name = req.last_name
+
     db.commit()
     return {"status": "updated"}

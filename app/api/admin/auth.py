@@ -132,3 +132,53 @@ async def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = D
         "is_super_admin": is_admin,
         "roles": roles
     }
+
+class AccountCreate(BaseModel):
+    label: str
+    acc_type: str
+    details: str
+    is_default: bool = False
+
+@router.get("/accounts")
+async def list_accounts(db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    return db.query(models.AdminAccount).filter_by(admin_jid=admin["phone"] + "@c.us").all()
+
+@router.post("/accounts")
+async def add_account(req: AccountCreate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    admin_jid = admin["phone"] + "@c.us"
+    if req.is_default:
+        db.query(models.AdminAccount).filter_by(admin_jid=admin_jid).update({"is_default": False})
+
+    db_acc = models.AdminAccount(
+        admin_jid=admin_jid, label=req.label, acc_type=req.acc_type,
+        details=req.details, is_default=req.is_default
+    )
+    db.add(db_acc)
+    db.commit()
+    return {"status": "added"}
+
+@router.patch("/accounts/{account_id}")
+async def update_account(account_id: int, req: AccountCreate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    admin_jid = admin["phone"] + "@c.us"
+    acc = db.query(models.AdminAccount).filter_by(id=account_id, admin_jid=admin_jid).first()
+    if not acc: raise HTTPException(status_code=404)
+
+    if req.is_default:
+        db.query(models.AdminAccount).filter_by(admin_jid=admin_jid).update({"is_default": False})
+
+    acc.label = req.label
+    acc.acc_type = req.acc_type
+    acc.details = req.details
+    acc.is_default = req.is_default
+    db.commit()
+    return {"status": "updated"}
+
+@router.delete("/accounts/{account_id}")
+async def delete_account(account_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    admin_jid = admin["phone"] + "@c.us"
+    acc = db.query(models.AdminAccount).filter_by(id=account_id, admin_jid=admin_jid).first()
+    if not acc: raise HTTPException(status_code=404)
+
+    db.delete(acc)
+    db.commit()
+    return {"status": "deleted"}

@@ -119,11 +119,52 @@ async def handle(
             chat_id,
             f"✅ Perfecto, *{data['first_name']} {data['last_name']}*.\n\n"
             "Ingresa tu *usuario* del sistema escolar:\n"
-            "_(o escribe /cancelar para salir)_",
+            "_(o escribe *omitir* para registrarte sin credenciales)_",
         )
 
     # ── awaiting_username ──────────────────────────────────────────────────────
     elif state == "awaiting_username":
+        user_input = text.strip().lower()
+
+        # Check if user wants to skip credentials
+        if user_input in ("omitir", "skip", "no tengo"):
+            # Create parent without credentials
+            parent = models.Parent(
+                first_name=data["first_name"],
+                last_name=data["last_name"],
+                whatsapp_jid=raw_jid,
+                registered_at=datetime.utcnow(),
+            )
+            db.add(parent)
+            db.flush()
+
+            # Mark invite code as used
+            invite_obj = db.query(models.InviteCode).get(data["invite_code_id"])
+            if invite_obj:
+                invite_obj.status = "used"
+                invite_obj.used_at = datetime.utcnow()
+                invite_obj.parent_id = parent.id
+
+            db.delete(session)
+            db.commit()
+
+            wa.send_text(
+                chat_id,
+                f"✅ *¡Registro completado, {parent.first_name}!*\n\n"
+                "No tienes credenciales del portal, así que no recibirás resúmenes automáticos. "
+                "Puedes agregarlas más tarde.\n\n"
+                "📌 Agrega este bot a tu grupo de WhatsApp para usar las funciones de pago y formularios.",
+            )
+            wa.send_text(
+                chat_id,
+                "⚠️ *Aviso importante:* Este asistente es un proyecto "
+                "*independiente*. *No es una aplicación oficial* del colegio "
+                "ni de Seduca/GSEpty.\n\n"
+                "Para preguntas o soporte: *67815352*",
+            )
+            return
+
+        # Normal path: proceed with credentials
         data["username"] = text.strip()
         _update(session, "awaiting_password", data, db)
         # Delete the username message immediately

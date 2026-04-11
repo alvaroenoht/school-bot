@@ -56,3 +56,49 @@ async def list_events(
     return db.query(models.Event).join(models.EventAudience).filter(
         models.EventAudience.classroom_id.in_(my_classrooms)
     ).distinct().all()
+
+@router.get("/{event_id}")
+async def get_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin)
+):
+    event = db.query(models.Event).filter_by(id=event_id).first()
+    if not event: raise HTTPException(status_code=404)
+    return event
+
+@router.patch("/{event_id}")
+async def update_event(
+    event_id: int,
+    req: EventCreate,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin)
+):
+    event = db.query(models.Event).filter_by(id=event_id).first()
+    if not event: raise HTTPException(status_code=404)
+
+    event.title = req.title
+    if req.description: event.description = req.description
+    event.date = req.date
+    if req.location: event.location = req.location
+    event.is_global = len(req.audience_classroom_ids) == 0 and admin["is_super_admin"]
+
+    db.query(models.EventAudience).filter_by(event_id=event_id).delete()
+    for cid in req.audience_classroom_ids:
+        db.add(models.EventAudience(event_id=event_id, classroom_id=cid))
+
+    db.commit()
+    return {"status": "updated"}
+
+@router.delete("/{event_id}")
+async def delete_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin)
+):
+    event = db.query(models.Event).filter_by(id=event_id).first()
+    if not event: raise HTTPException(status_code=404)
+
+    db.delete(event)
+    db.commit()
+    return {"status": "deleted"}

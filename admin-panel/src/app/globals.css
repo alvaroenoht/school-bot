@@ -24,3 +24,12 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@layer components {
+  .label-sm {
+    @apply text-[10px] font-black uppercase text-slate-400 ml-2 tracking-widest;
+  }
+  .section-label {
+    @apply text-[10px] font-black uppercase text-slate-400 ml-2 tracking-widest;
+  }
+}

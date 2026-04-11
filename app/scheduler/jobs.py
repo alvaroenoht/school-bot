@@ -3,6 +3,7 @@ APScheduler job definitions.
 Replaces AppDaemon's run_daily / run_at scheduling.
 """
 import logging
+from datetime import datetime
 
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -78,6 +79,15 @@ def create_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=int(cal_h), minute=int(cal_m), timezone=tz),
         id="calendar_reminders",
         name="Google Calendar reminders",
+        replace_existing=True,
+    )
+
+    # ── Payment session TTL cleanup (every 2 hours) ────────────────────────────
+    scheduler.add_job(
+        _cleanup_stale_payment_sessions,
+        CronTrigger(hour="*/2", minute=30, timezone=tz),
+        id="payment_session_cleanup",
+        name="Payment session TTL cleanup",
         replace_existing=True,
     )
 
@@ -352,5 +362,33 @@ async def _sync_known_contact_groups_job():
 
     except Exception as e:
         logger.exception("KCG sync error: %s", e)
+    finally:
+        db.close()
+
+
+async def _cleanup_stale_payment_sessions():
+    """Delete payment ConversationSessions idle > 4 hours (Issue #2)."""
+    from datetime import timedelta
+    from app.db.database import SessionLocal
+    from app.db import models
+
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=4)
+        stale = (
+            db.query(models.ConversationSession)
+            .filter(
+                models.ConversationSession.flow == "payment",
+                models.ConversationSession.updated_at < cutoff,
+            )
+            .all()
+        )
+        for s in stale:
+            db.delete(s)
+        db.commit()
+        if stale:
+            logger.info("Payment TTL cleanup: deleted %d stale sessions", len(stale))
+    except Exception as e:
+        logger.exception("Payment session cleanup error: %s", e)
     finally:
         db.close()

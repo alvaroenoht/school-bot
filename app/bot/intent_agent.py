@@ -559,3 +559,63 @@ def _fallback(raw_jid, chat_id, text, db, sender):
             "  • `/pagar <nombre>` — pagar una actividad escolar\n"
             "  • Pregúntame qué actividades hay disponibles",
         )
+
+
+# ── Payment assist (Issue #2) ──────────────────────────────────────────────────
+
+async def handle_payment_assist(chat_id: str, user_text: str, context: dict) -> dict | None:
+    """
+    Called when a parent is struggling in the payment flow.
+    Returns a structured action dict or None on failure.
+
+    Action types:
+      {"type": "set_order", "cart": [...]}   — agent parsed the order
+      {"type": "restart"}                     — reset catalog/receipt step
+      {"type": "natural_reply", "text": "…"} — send freeform message
+    """
+    settings = get_settings()
+    client = openai.OpenAI(api_key=settings.openai_api_key)
+
+    step = context.get("step", "unknown")
+    reason = context.get("reason", "unknown")
+    products = context.get("products", [])
+    recent = context.get("recent_inputs", [])
+
+    product_list = "\n".join(f"  {i+1}. {p['name']} — ${p['price']}" for i, p in enumerate(products)) or "N/A"
+
+    system = (
+        "Eres un asistente experto en flujos de pago escolar por WhatsApp. "
+        "Un padre está teniendo dificultades en el paso del flujo de pago. "
+        "Tu tarea es interpretar lo que quiere hacer y devolver UNA acción JSON estructurada. "
+        "NUNCA respondas texto libre — responde SOLO con JSON.\n\n"
+        f"Paso actual: {step}\n"
+        f"Motivo de escalación: {reason}\n"
+        f"Actividad: {context.get('fundraiser_name')} ({context.get('fundraiser_type')})\n"
+        f"Nombre del estudiante: {context.get('child_name')}\n"
+        f"Catálogo de productos:\n{product_list}\n"
+        f"Últimas entradas del padre: {recent}\n\n"
+        "Acciones posibles:\n"
+        '  {"type":"set_order","cart":[{"name":"...","price":"X.XX","qty":N},...]}  — si puedes inferir el pedido\n'
+        '  {"type":"restart"}                                                        — si el padre está muy perdido\n'
+        '  {"type":"natural_reply","text":"..."}                                     — para aclarar o guiar con palabras\n'
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_text or "(sin texto — posiblemente imagen)"},
+            ],
+            temperature=0.2,
+            timeout=20,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content
+        action = json.loads(raw)
+        logger.info("Payment assist action=%s reason=%s chat=%s", action.get("type"), reason, chat_id)
+        return action
+    except Exception as e:
+        logger.error("Payment assist failed: %s", e)
+        return None
+

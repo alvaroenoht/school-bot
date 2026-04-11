@@ -1,5 +1,6 @@
 """
 Parent payment flow — handles both fixed-amount and variable/catalog fundraisers.
+Issue #2: Struggle detection + AI escalation added.
 
 Entry point: DM with "pay <name>" or "pagar <name>".
 Sender must be a Registered Parent or Known Contact.
@@ -180,6 +181,32 @@ async def handle(
     _p = payload or {}
     media_type = _p.get("type") or _p.get("_data", {}).get("type") or ""
 
+    # ── Regex guards: reject bot-command-like inputs in name/order steps ──
+    _CMD_RE = re.compile(r"^(pagar|pay|/|FORM-[A-Z0-9]+)\b", re.IGNORECASE)
+    if step in ("awaiting_child", "awaiting_order", "confirming_order") and _CMD_RE.match(text):
+        wa.send_text(chat_id, "Por favor responde con la opción que te pedí, no con un comando.")
+        return
+
+    # ── Image with caption in receipt step: extract caption as fallback ──
+    if step == "awaiting_receipt" and has_media and media_type == "image":
+        caption = _p.get("body") or _p.get("caption") or ""
+        if caption:
+            data.setdefault("_image_caption", caption)
+
+    # ── Track input history for struggle detection ────────────────────────
+    history = data.get("_input_history", [])
+    if text:
+        history = (history + [text])[-10:]
+        data["_input_history"] = history
+    data["_last_step"] = step
+
+    # ── Struggle detection → AI escalation ───────────────────────────────
+    struggle = _detect_struggle(session, text, data)
+    if struggle:
+        logger.info("Struggle detected (%s) at step=%s — escalating to agent", struggle, step)
+        await _escalate_to_agent(raw_jid, chat_id, text, db, session, data, struggle)
+        return
+
     # ── awaiting_child ────────────────────────────────────────────────────
     if step == "awaiting_child":
         children = data.get("children", [])
@@ -216,6 +243,7 @@ async def handle(
             _advance(session, "awaiting_receipt", data, db)
             _send_payment_instructions(chat_id, fundraiser, data)
         elif text.lower() in ("no", "cambiar", "editar"):
+            data["_no_count"] = data.get("_no_count", 0) + 1
             fundraiser = db.query(models.Fundraiser).get(data["fundraiser_id"])
             data.pop("cart", None)
             data.pop("cart_total", None)
@@ -377,6 +405,8 @@ async def _process_order_input(
         cart.append({"product_id": p.id, "name": p.name, "price": p.price, "qty": qty})
 
     if not cart:
+        data["_no_entendi_count"] = data.get("_no_entendi_count", 0) + 1
+        _advance(session, session.step, data, db)
         nums = " ".join(str(i) for i in range(1, min(len(products) + 1, 4)))
         wa.send_text(
             chat_id,
@@ -603,3 +633,111 @@ def _advance(session: models.ConversationSession, step: str, data: dict, db: Ses
     flag_modified(session, "data")
     session.updated_at = datetime.utcnow()
     db.commit()
+
+
+def _detect_struggle(session: models.ConversationSession, text: str, data: dict) -> str | None:
+    """Detect parent struggling with the payment flow. Returns struggle reason or None."""
+    history = data.get("_input_history", [])
+
+    # 1. Repeated "No entendí" — bot sent this when order parse failed
+    no_entendi_count = data.get("_no_entendi_count", 0)
+    if no_entendi_count >= 2:
+        return "repeated_parse_failures"
+
+    # 2. Same input twice in a row
+    if len(history) >= 2 and history[-1].lower() == history[-2].lower():
+        return "repeated_input"
+
+    # 3. Long natural language when expecting si/no or numeric
+    expects_short = session.step in ("awaiting_confirmation", "confirming_order")
+    if expects_short and len(text.split()) > 8:
+        return "verbose_when_short_expected"
+
+    # 4. Session stuck > 5 min on same step
+    if session.updated_at:
+        elapsed = (datetime.utcnow() - session.updated_at).total_seconds()
+        same_step = data.get("_last_step") == session.step
+        if elapsed > 300 and same_step:
+            return "stuck_timeout"
+
+    # 5. User says No twice after order confirmation
+    no_count = data.get("_no_count", 0)
+    if session.step == "confirming_order" and no_count >= 2:
+        return "repeated_rejection"
+
+    return None
+
+
+async def _escalate_to_agent(
+    raw_jid: str, chat_id: str, text: str,
+    db: Session, session: models.ConversationSession, data: dict, reason: str,
+):
+    """Hand off a struggling parent to the AI agent, apply its action, then resume."""
+    from app.bot.intent_agent import handle_payment_assist
+
+    fundraiser = db.query(models.Fundraiser).get(data.get("fundraiser_id"))
+    products = []
+    if fundraiser and fundraiser.type == "variable":
+        products = [
+            {"id": p.id, "name": p.name, "price": p.price}
+            for p in db.query(models.FundraiserProduct)
+            .filter_by(fundraiser_id=fundraiser.id)
+            .order_by(models.FundraiserProduct.sort_order)
+            .all()
+        ]
+
+    context = {
+        "step": session.step,
+        "reason": reason,
+        "fundraiser_name": data.get("fundraiser_name"),
+        "fundraiser_type": getattr(fundraiser, "type", None),
+        "fixed_amount": getattr(fundraiser, "fixed_amount", None),
+        "cart": data.get("cart"),
+        "cart_total": data.get("cart_total"),
+        "child_name": data.get("child_name"),
+        "payer_name": data.get("payer_name"),
+        "recent_inputs": data.get("_input_history", [])[-5:],
+        "products": products,
+    }
+
+    action = await handle_payment_assist(chat_id, text, context)
+
+    if action is None:
+        # Fallback: just nudge gently
+        wa.send_text(chat_id, "¿Necesitas ayuda? Escribe *cancelar* para salir o *pagar* para reintentar.")
+        return
+
+    action_type = action.get("type")
+
+    if action_type == "set_order" and action.get("cart"):
+        # Agent parsed the order — apply it and advance
+        cart = action["cart"]
+        total = sum(float(c["price"]) * c["qty"] for c in cart)
+        data["cart"] = cart
+        data["cart_total"] = str(round(total, 2))
+        data["_no_entendi_count"] = 0
+        lines = ["🛒 *Tu pedido:*\n"]
+        for c in cart:
+            lines.append(f"  • {c['qty']}x {c['name']} — ${float(c['price']) * c['qty']:.2f}")
+        lines.append(f"\n💵 *Total: ${total:.2f}*\n\n¿Confirmar pedido? Responde *si* o *no*.")
+        _advance(session, "confirming_order", data, db)
+        wa.send_text(chat_id, "\n".join(lines))
+
+    elif action_type == "restart":
+        # Reset to beginning for this fundraiser
+        data.pop("cart", None); data.pop("cart_total", None)
+        data["_no_entendi_count"] = 0; data["_no_count"] = 0
+        _advance(session, "awaiting_receipt" if getattr(fundraiser, "type", "fixed") == "fixed" else "showing_catalog", data, db)
+        if fundraiser:
+            if fundraiser.type == "variable":
+                wa.send_text(chat_id, "Vamos a intentar de nuevo. Aquí está el catálogo:")
+                _send_catalog(chat_id, fundraiser, db)
+            else:
+                _send_payment_instructions(chat_id, fundraiser, data)
+
+    elif action_type == "natural_reply" and action.get("text"):
+        wa.send_text(chat_id, action["text"])
+
+    else:
+        # Unknown action — gentle nudge
+        wa.send_text(chat_id, "¿Necesitas ayuda? Escribe *cancelar* para salir o *pagar* para reintentar.")
