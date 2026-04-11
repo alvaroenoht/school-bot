@@ -16,7 +16,7 @@ class EventCreate(BaseModel):
     location: Optional[str] = None
     audience_classroom_ids: List[int] = [] # empty = global if is_global is handled
 
-@router.post("/")
+@router.post("")
 async def create_event(
     req: EventCreate,
     db: Session = Depends(get_db),
@@ -44,7 +44,7 @@ async def create_event(
     db.commit()
     return {"id": db_event.id, "status": "created"}
 
-@router.get("/")
+@router.get("")
 async def list_events(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin)

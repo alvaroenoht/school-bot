@@ -29,7 +29,7 @@ class FormUpdate(BaseModel):
     title: Optional[str] = None
     audience_classroom_ids: Optional[List[int]] = None
 
-@router.post("/")
+@router.post("")
 async def create_form(req: FormCreate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
     if not admin["is_super_admin"]:
         my_classrooms = [r["classroom_id"] for r in admin["roles"]]
@@ -71,9 +71,35 @@ async def remind_incomplete(form_id: int, db: Session = Depends(get_db), admin: 
         
     return {"sent_count": len(unanswered_jids)}
 
-@router.get("/")
-async def list_forms(db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
-    return db.query(models.Form).all()
+@router.get("")
+async def list_forms(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    forms = db.query(models.Form).all()
+    if status:
+        forms = [f for f in forms if f.status == status]
+    else:
+        forms = [f for f in forms if f.status != "archived"]
+
+    result = []
+    for f in forms:
+        audience_ids = [a.classroom_id for a in db.query(models.FormAudience).filter_by(form_id=f.id).all()]
+        audience_count = (
+            db.query(models.Parent)
+            .filter(models.Parent.classroom_id.in_(audience_ids), models.Parent.is_active == True)
+            .count() if audience_ids else 0
+        )
+        submitted = db.query(models.FormSubmission).filter_by(form_id=f.id, status="submitted").count()
+        result.append({
+            "id": f.id, "title": f.title, "purpose": f.purpose, "status": f.status,
+            "submitted_count": submitted,
+            "audience_count": audience_count,
+            "completion_pct": round(submitted / audience_count * 100) if audience_count else 0,
+            "created_at": f.created_at,
+        })
+    return result
 
 @router.get("/{form_id}/report")
 async def get_report(form_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):

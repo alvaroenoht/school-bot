@@ -5,7 +5,7 @@ import {
   Lock, MessageSquare, Plus, Activity, LayoutList, Users, Calendar,
   ChevronRight, Settings, LogOut, X, Tag, FileText, CalendarPlus,
   ChevronLeft, Filter, Edit2, User, CreditCard, Check, Trash2,
-  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft
+  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '@/lib/api';
@@ -24,7 +24,7 @@ const TRANSLATIONS = {
     code_placeholder: "6-digit code", get_code: "Request Code", verify_code: "Login",
     dashboard: "Dashboard", fundraisers: "Fundraisers", forms: "Forms",
     groups: "Groups", events: "Events", assistant: "AI Assistant",
-    logout: "Logout", create: "Create", activity: "Activity",
+    logout: "Logout", create: "Create", activity: "Fundraiser",
     form: "Form", event: "Event", members: "Group Members",
     parent_name: "Parent Name", student_name: "Student Name",
     primary_payer: "Primary Payer", save: "Save", settings: "Settings",
@@ -59,7 +59,7 @@ const TRANSLATIONS = {
     code_placeholder: "Código de 6 dígitos", get_code: "Solicitar Código", verify_code: "Entrar",
     dashboard: "Resumen", fundraisers: "Actividades", forms: "Formularios",
     groups: "Grupos", events: "Eventos", assistant: "Asistente IA",
-    logout: "Salir", create: "Crear", activity: "Actividad",
+    logout: "Salir", create: "Crear", activity: "Actividad de Pago",
     form: "Formulario", event: "Evento", members: "Miembros",
     parent_name: "Nombre del Padre", student_name: "Nombre del Estudiante",
     primary_payer: "Responsable Pago", save: "Guardar", settings: "Configuración",
@@ -108,6 +108,9 @@ export default function AdminApp() {
   const [classrooms, setClassrooms] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [showArchivedFunds, setShowArchivedFunds] = useState(false);
+  const [showArchivedForms, setShowArchivedForms] = useState(false);
 
   // Detail views
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
@@ -128,6 +131,7 @@ export default function AdminApp() {
 
   // Fundraiser form
   const [fName, setFName] = useState('');
+  const [fFriendlyName, setFFriendlyName] = useState('');
   const [fType, setFType] = useState<'fixed' | 'variable'>('fixed');
   const [fAmount, setFAmount] = useState('');
   const [fAccountId, setFAccountId] = useState('');
@@ -175,11 +179,24 @@ export default function AdminApp() {
 
   useEffect(() => { if (step === 'dashboard') fetchAll(); }, [step]);
 
-  const fetchAll = async () => {
+  // Auto-clear error after 4s
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(''), 4000);
+    return () => clearTimeout(t);
+  }, [error]);
+
+  const fetchAll = async (opts?: { archivedFunds?: boolean; archivedForms?: boolean }) => {
+    setDataLoading(true);
+    const af = opts?.archivedFunds ?? showArchivedFunds;
+    const afo = opts?.archivedForms ?? showArchivedForms;
     try {
       const [fr, fo, cl, ev, ac] = await Promise.all([
-        api.get('/fundraisers'), api.get('/forms'), api.get('/classrooms'),
-        api.get('/events'), api.get('/auth/accounts'),
+        api.get(af ? '/fundraisers?status=closed' : '/fundraisers'),
+        api.get(afo ? '/forms?status=closed' : '/forms'),
+        api.get('/classrooms'),
+        api.get('/events'),
+        api.get('/auth/accounts'),
       ]);
       setFundraisers(fr.data || []);
       setForms(fo.data || []);
@@ -187,7 +204,8 @@ export default function AdminApp() {
       setEvents(ev.data || []);
       setAccounts(ac.data || []);
       if ((ac.data || []).length > 0) setFAccountId(String(ac.data[0].id));
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); setError('Error loading data'); }
+    finally { setDataLoading(false); }
   };
 
   const handleRequestOTP = async (e: React.FormEvent) => {
@@ -297,6 +315,7 @@ export default function AdminApp() {
       const selectedAcc = accounts.find(a => String(a.id) === fAccountId);
       await api.post('/fundraisers', {
         name: fName,
+        friendly_name: fFriendlyName || fName,
         account_number: selectedAcc?.details || fAccountId,
         type: fType,
         fixed_amount: fType === 'fixed' ? fAmount : null,
@@ -304,7 +323,7 @@ export default function AdminApp() {
         products: fType === 'variable' ? fProducts.filter(p => p.name) : null,
       });
       setShowNewFundraiser(false);
-      setFName(''); setFAmount(''); setFAudience([]); setFProducts([{ name: '', price: '' }]);
+      setFName(''); setFFriendlyName(''); setFAmount(''); setFAudience([]); setFProducts([{ name: '', price: '' }]);
       await fetchAll();
       goTab('fundraisers');
     } catch { setError('Error creating'); }
@@ -431,7 +450,18 @@ export default function AdminApp() {
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-32">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-40">
+      {/* Error toast */}
+      <AnimatePresence>
+        {error && (
+          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 left-4 right-4 z-[100] bg-red-500 text-white px-5 py-3 rounded-2xl text-sm font-black shadow-xl flex justify-between items-center">
+            <span>{error}</span>
+            <button onClick={() => setError('')}><X className="w-4 h-4" /></button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-md sticky top-0 z-30 px-6 py-4 flex justify-between items-center border-b border-slate-100">
         <div onClick={() => goTab('home')} className="cursor-pointer">
@@ -502,13 +532,25 @@ export default function AdminApp() {
           {/* Fundraisers list */}
           {!selectedReport && activeTab === 'fundraisers' && (
             <ListView key="fund-list" title={t.fundraisers} items={fundraisers} type="activity"
-              noItemsLabel={t.no_items} onSelect={(f: any) => selectReport(f, 'fundraiser')} />
+              noItemsLabel={t.no_items} loading={dataLoading} onSelect={(f: any) => selectReport(f, 'fundraiser')}
+              showArchived={showArchivedFunds}
+              onToggleArchived={() => {
+                const next = !showArchivedFunds;
+                setShowArchivedFunds(next);
+                fetchAll({ archivedFunds: next });
+              }} />
           )}
 
           {/* Forms list */}
           {!selectedReport && activeTab === 'forms' && (
             <ListView key="form-list" title={t.forms} items={forms} type="form"
-              noItemsLabel={t.no_items} onSelect={(f: any) => selectReport(f, 'form')} />
+              noItemsLabel={t.no_items} loading={dataLoading} onSelect={(f: any) => selectReport(f, 'form')}
+              showArchived={showArchivedForms}
+              onToggleArchived={() => {
+                const next = !showArchivedForms;
+                setShowArchivedForms(next);
+                fetchAll({ archivedForms: next });
+              }} />
           )}
 
           {/* Events list */}
@@ -538,7 +580,7 @@ export default function AdminApp() {
           {/* Groups list */}
           {!selectedGroup && activeTab === 'groups' && (
             <ListView key="group-list" title={t.groups} items={classrooms} type="group"
-              noItemsLabel={t.no_items} onSelect={(g: any) => selectGroup(g)} />
+              noItemsLabel={t.no_items} loading={dataLoading} onSelect={(g: any) => selectGroup(g)} />
           )}
 
           {/* Group detail */}
@@ -695,15 +737,24 @@ export default function AdminApp() {
       </main>
 
       {/* Bottom nav */}
-      <nav className="fixed bottom-6 left-6 right-6 bg-white/90 backdrop-blur-xl border border-white/20 rounded-[2.5rem] h-20 flex items-center justify-around shadow-2xl shadow-slate-200 z-40">
-        <NavBtn icon={<Activity />} active={activeTab === 'fundraisers'} onClick={() => goTab('fundraisers')} />
-        <NavBtn icon={<Users />} active={activeTab === 'groups'} onClick={() => goTab('groups')} />
-        <button onClick={() => setShowCreateMenu(true)}
-          className="bg-indigo-600 text-white p-4 rounded-full -mt-12 shadow-xl shadow-indigo-300 ring-8 ring-[#F8FAFC] active:scale-90 transition-transform">
-          <Plus className="w-7 h-7" />
-        </button>
-        <NavBtn icon={<LayoutList />} active={activeTab === 'forms'} onClick={() => goTab('forms')} />
-        <NavBtn icon={<Settings />} active={activeTab === 'settings'} onClick={() => goTab('settings')} />
+      <nav className="fixed bottom-6 left-4 right-4 z-40">
+        {/* Create FAB */}
+        <div className="flex justify-center mb-3">
+          <button onClick={() => setShowCreateMenu(true)}
+            className="bg-indigo-600 text-white px-6 py-3 rounded-full shadow-xl shadow-indigo-300 flex items-center gap-2 active:scale-90 transition-transform">
+            <Plus className="w-5 h-5" />
+            <span className="text-xs font-black uppercase tracking-widest">{t.create}</span>
+          </button>
+        </div>
+        {/* Tab bar */}
+        <div className="bg-white/90 backdrop-blur-xl border border-white/20 rounded-[2rem] h-16 flex items-center gap-1 px-2 shadow-2xl shadow-slate-200 overflow-x-auto">
+          <NavBtn icon={<Home />} label="Inicio" active={activeTab === 'home'} onClick={() => goTab('home')} />
+          <NavBtn icon={<Activity />} label={t.fundraisers} active={activeTab === 'fundraisers'} onClick={() => goTab('fundraisers')} />
+          <NavBtn icon={<LayoutList />} label={t.forms} active={activeTab === 'forms'} onClick={() => goTab('forms')} />
+          <NavBtn icon={<Users />} label={t.groups} active={activeTab === 'groups'} onClick={() => goTab('groups')} />
+          <NavBtn icon={<Calendar />} label={t.events} active={activeTab === 'events'} onClick={() => goTab('events')} />
+          <NavBtn icon={<Settings />} label={t.settings} active={activeTab === 'settings'} onClick={() => goTab('settings')} />
+        </div>
       </nav>
 
       {/* Create menu */}
@@ -729,6 +780,8 @@ export default function AdminApp() {
             <div className="space-y-5">
               <FlatInput label={t.fund_name} icon={<Tag className="w-4 h-4" />}
                 value={fName} onChange={setFName} />
+              <FlatInput label="Nombre amigable (para el bot)" icon={<MessageSquare className="w-4 h-4" />}
+                value={fFriendlyName} onChange={setFFriendlyName} />
 
               {/* Account */}
               <div className="space-y-2">
@@ -967,10 +1020,11 @@ function DashCard({ title, icon, color, count, onClick }: any) {
   );
 }
 
-function NavBtn({ icon, active, onClick }: any) {
+function NavBtn({ icon, label, active, onClick }: any) {
   return (
-    <button onClick={onClick} className={`p-3 rounded-2xl transition-all ${active ? 'text-indigo-600 bg-indigo-50 shadow-inner' : 'text-slate-300'}`}>
-      {icon}
+    <button onClick={onClick} className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-2xl transition-all flex-shrink-0 ${active ? 'text-indigo-600 bg-indigo-50' : 'text-slate-300'}`}>
+      <div className="w-5 h-5">{icon}</div>
+      {label && <span className={`text-[8px] font-black uppercase tracking-tight leading-none ${active ? 'text-indigo-600' : 'text-slate-300'}`}>{label}</span>}
     </button>
   );
 }
@@ -984,28 +1038,79 @@ function CreateOpt({ icon, label, color, onClick }: any) {
   );
 }
 
-function ListView({ title, items, type, noItemsLabel, onSelect }: any) {
-  const colors: any = { activity: 'bg-emerald-500', form: 'bg-indigo-500', group: 'bg-blue-500' };
-  const icons: any = { activity: <Activity className="w-5 h-5" />, form: <FileText className="w-5 h-5" />, group: <Users className="w-5 h-5" /> };
+function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArchived, onToggleArchived }: any) {
+  const accentColors: any = { activity: 'bg-emerald-500', form: 'bg-indigo-500', group: 'bg-blue-500' };
+  const barColors: any = { activity: 'bg-emerald-400', form: 'bg-indigo-400' };
+
   return (
-    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-      <h2 className="text-2xl font-black tracking-tight">{title}</h2>
-      <div className="space-y-4">
-        {items.length === 0 ? (
+    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-black tracking-tight">{title}</h2>
+        {onToggleArchived && (
+          <button onClick={onToggleArchived}
+            className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full transition-all ${showArchived ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-400'}`}>
+            {showArchived ? 'Activos' : 'Ver todos'}
+          </button>
+        )}
+      </div>
+      <div className="space-y-3">
+        {loading ? (
+          [0,1,2].map(i => (
+            <div key={i} className="bg-white p-5 rounded-[2rem] border border-slate-100 animate-pulse">
+              <div className="flex items-center gap-4 mb-3">
+                <div className="w-10 h-10 bg-slate-100 rounded-2xl flex-shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 bg-slate-100 rounded-full w-2/3" />
+                  <div className="h-2 bg-slate-100 rounded-full w-1/3" />
+                </div>
+              </div>
+              <div className="h-1.5 bg-slate-100 rounded-full" />
+            </div>
+          ))
+        ) : items.length === 0 ? (
           <div className="text-center text-slate-400 py-12">{noItemsLabel}</div>
-        ) : items.map((item: any, i: number) => (
-          <div key={i} onClick={() => onSelect?.(item)}
-            className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex items-center gap-4 active:scale-[0.98] transition-transform cursor-pointer">
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white flex-shrink-0 ${colors[type] || 'bg-slate-500'}`}>
-              {icons[type]}
+        ) : items.map((item: any, i: number) => {
+          const pct = item.completion_pct ?? null;
+          const paid = item.paid_count ?? item.submitted_count ?? null;
+          const total = item.audience_count ?? null;
+          const collected = item.total_collected ?? null;
+          const isArchived = item.status === 'archived' || item.status === 'closed';
+
+          return (
+            <div key={i} onClick={() => onSelect?.(item)}
+              className={`bg-white p-5 rounded-[2rem] shadow-sm border active:scale-[0.98] transition-transform cursor-pointer ${isArchived ? 'border-slate-100 opacity-60' : 'border-slate-100'}`}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white flex-shrink-0 text-[11px] font-black ${accentColors[type] || 'bg-slate-400'}`}>
+                  {item.code ? item.code.slice(0, 3) : (type === 'group' ? <Users className="w-4 h-4" /> : null)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-black text-slate-800 truncate text-sm">{item.name || item.title}</h4>
+                    {isArchived && <span className="text-[8px] font-black uppercase bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full flex-shrink-0">{item.status}</span>}
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                    {item.code ? `${item.code} · ` : ''}{item.purpose || item.type || ''}
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  {collected !== null && <div className="text-sm font-black text-emerald-600">${collected.toLocaleString()}</div>}
+                  {paid !== null && total !== null && (
+                    <div className="text-[10px] font-bold text-slate-400">{paid}/{total}</div>
+                  )}
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+              </div>
+              {pct !== null && (
+                <div className="space-y-1">
+                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${barColors[type] || 'bg-slate-400'}`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="text-[9px] font-black text-slate-300 text-right">{pct}% completado</div>
+                </div>
+              )}
             </div>
-            <div className="flex-1 min-w-0">
-              <h4 className="font-black text-slate-800 truncate">{item.name || item.title}</h4>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{item.status || item.purpose}</p>
-            </div>
-            <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </motion.div>
   );
