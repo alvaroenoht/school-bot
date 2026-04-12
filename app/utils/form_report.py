@@ -39,7 +39,13 @@ def _get_submission_student_name(submission: models.FormSubmission, db: Session)
     normalized_jid = _normalize_jid(submission.respondent_jid)
     for contact in db.query(models.KnownContact).all():
         if _normalize_jid(contact.jid) == normalized_jid:
-            return contact.child_name or ""
+            # child_name now on KCG; return first non-null
+            kcg = db.query(models.KnownContactGroup).filter(
+                models.KnownContactGroup.contact_jid == contact.jid,
+                models.KnownContactGroup.child_name.isnot(None),
+                models.KnownContactGroup.active == True,
+            ).first()
+            return kcg.child_name if kcg else ""
     return ""
 
 

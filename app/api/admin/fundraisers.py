@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db import models
-from app.api.admin.auth import get_current_admin
+from app.api.admin.auth import get_current_admin, require_write_access
 from app.whatsapp.client import WahaClient
+from app.bot.notifications import notify_fundraiser_created
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/fundraisers", tags=["fundraisers"])
@@ -19,7 +20,6 @@ class ProductSchema(BaseModel):
 
 class FundraiserCreate(BaseModel):
     name: str
-    friendly_name: Optional[str] = None
     account_number: str
     type: str  # fixed | variable
     fixed_amount: Optional[str] = None
@@ -29,7 +29,6 @@ class FundraiserCreate(BaseModel):
 class FundraiserUpdate(BaseModel):
     status: Optional[str] = None  # active | closed | archived
     name: Optional[str] = None
-    friendly_name: Optional[str] = None
     audience_classroom_ids: Optional[List[int]] = None
 
 
@@ -49,14 +48,38 @@ def _generate_code(name: str, db: Session) -> str:
 def _fund_stats(fund: models.Fundraiser, db: Session) -> dict:
     confirmed = [p for p in fund.payments if p.status == "confirmed"]
     total = sum(float(p.amount or 0) for p in confirmed)
-    paid_count = len(confirmed)
     audience_ids = fund.audience_classroom_ids or []
-    audience_count = (
-        db.query(models.Parent)
-        .filter(models.Parent.classroom_id.in_(audience_ids), models.Parent.is_active == True)
-        .count()
-        if audience_ids else 0
-    )
+    # Count kids (unique child_names) across audience classrooms
+    if audience_ids:
+        kcgs = db.query(models.KnownContactGroup).filter(
+            models.KnownContactGroup.classroom_id.in_(audience_ids),
+            models.KnownContactGroup.active == True,
+        ).all()
+        child_names = {(kcg.child_name or "").lower().strip() for kcg in kcgs if kcg.child_name}
+        unnamed = sum(1 for kcg in kcgs if not kcg.child_name)
+        audience_count = len(child_names) + unnamed
+    else:
+        audience_count = 0
+
+    # For fixed fundraisers, count unique kids who have fully paid vs partially
+    if fund.type == "fixed" and fund.fixed_amount:
+        fixed_amount = float(fund.fixed_amount)
+        # Group confirmed payments by child_name
+        child_totals: dict[str, float] = {}
+        for p in confirmed:
+            key = (p.child_name or "").lower().strip()
+            child_totals[key] = child_totals.get(key, 0) + float(p.amount or 0)
+        fully_paid = sum(1 for t in child_totals.values() if t >= fixed_amount)
+        partially_paid = sum(1 for t in child_totals.values() if 0 < t < fixed_amount)
+        paid_count = fully_paid
+        completion_pct = round(fully_paid / audience_count * 100) if audience_count else 0
+    else:
+        # Variable: count unique kids with any confirmed payment
+        paid_kids = {(p.child_name or "").lower().strip() for p in confirmed}
+        paid_count = len(paid_kids)
+        partially_paid = 0
+        completion_pct = round(paid_count / audience_count * 100) if audience_count else 0
+
     return {
         "id": fund.id,
         "name": fund.name,
@@ -67,8 +90,9 @@ def _fund_stats(fund: models.Fundraiser, db: Session) -> dict:
         "status": fund.status,
         "total_collected": round(total, 2),
         "paid_count": paid_count,
+        "partially_paid": partially_paid,
         "audience_count": audience_count,
-        "completion_pct": round(paid_count / audience_count * 100) if audience_count else 0,
+        "completion_pct": completion_pct,
         "created_at": fund.created_at,
         "closed_at": fund.closed_at,
     }
@@ -76,15 +100,16 @@ def _fund_stats(fund: models.Fundraiser, db: Session) -> dict:
 
 @router.post("")
 async def create_fundraiser(req: FundraiserCreate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     if not admin["is_super_admin"]:
-        my_classrooms = [r["classroom_id"] for r in admin["roles"]]
-        if any(cid not in my_classrooms for cid in req.audience_classroom_ids):
+        my_write_classrooms = [r["classroom_id"] for r in admin["roles"] if r["role"] != "soporte"]
+        if any(cid not in my_write_classrooms for cid in req.audience_classroom_ids):
             raise HTTPException(status_code=403, detail="Not authorized")
 
     code = _generate_code(req.name, db)
     db_fund = models.Fundraiser(
         name=req.name,
-        friendly_name=req.friendly_name or req.name,
+        friendly_name=req.name,
         code=code,
         account_number=req.account_number,
         type=req.type,
@@ -99,11 +124,13 @@ async def create_fundraiser(req: FundraiserCreate, db: Session = Depends(get_db)
         for idx, p in enumerate(req.products):
             db.add(models.FundraiserProduct(fundraiser_id=db_fund.id, name=p.name, price=p.price, sort_order=idx))
     db.commit()
+    notify_fundraiser_created(db_fund, db)
     return {"id": db_fund.id, "code": code, "status": "active"}
 
 
 @router.post("/{fundraiser_id}/remind")
 async def remind_unpaid(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
     if not fund: raise HTTPException(status_code=404)
 
@@ -124,14 +151,14 @@ async def remind_unpaid(fundraiser_id: int, db: Session = Depends(get_db), admin
 
 @router.get("")
 async def list_fundraisers(
-    status: Optional[str] = None,  # "active" | "closed" | "archived" | None = all
+    status: Optional[str] = None,
+    include_closed: bool = False,
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
     q = db.query(models.Fundraiser)
     if not admin["is_super_admin"]:
         my_ids = [r["classroom_id"] for r in admin["roles"]]
-        # Filter by audience overlap (JSON contains check not trivial in SQLite/PG — filter in Python)
         all_funds = q.all()
         funds = [f for f in all_funds if any(cid in (f.audience_classroom_ids or []) for cid in my_ids)]
     else:
@@ -139,9 +166,10 @@ async def list_fundraisers(
 
     if status:
         funds = [f for f in funds if f.status == status]
-    else:
-        # Default: exclude archived
+    elif include_closed:
         funds = [f for f in funds if f.status != "archived"]
+    else:
+        funds = [f for f in funds if f.status == "active"]
 
     return [_fund_stats(f, db) for f in funds]
 
@@ -151,27 +179,118 @@ async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: d
     fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
     if not fund: raise HTTPException(status_code=404)
     payments = db.query(models.Payment).filter_by(fundraiser_id=fundraiser_id).all()
+
+    # Build unpaid/partially-paid kids list
+    confirmed_payments = [p for p in payments if p.status in ("confirmed", "pending")]
+    # For fixed fundraisers, track total paid per child
+    child_paid_totals: dict[str, float] = {}
+    for p in confirmed_payments:
+        if p.child_name:
+            key = p.child_name.lower().strip()
+            child_paid_totals[key] = child_paid_totals.get(key, 0) + float(p.amount or 0)
+
+    fixed_amount = float(fund.fixed_amount or 0) if fund.type == "fixed" else 0
+
+    unpaid = []
+    for cid in (fund.audience_classroom_ids or []):
+        cls = db.query(models.Classroom).get(cid)
+        cls_name = (cls.display_name or cls.name) if cls else str(cid)
+        kcgs = db.query(models.KnownContactGroup).filter_by(classroom_id=cid, active=True).all()
+        for kcg in kcgs:
+            child = (kcg.child_name or "").strip()
+            if not child:
+                continue
+            child_key = child.lower()
+            paid_total = child_paid_totals.get(child_key, 0)
+            # Fully paid → skip
+            if fixed_amount and paid_total >= fixed_amount:
+                continue
+            # No payment at all for variable → show as unpaid
+            if not fixed_amount and paid_total > 0:
+                continue
+            kc = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
+            entry = {
+                "child_name": child,
+                "parent_name": kc.name if kc else None,
+                "classroom": cls_name,
+            }
+            if fixed_amount and paid_total > 0:
+                entry["paid"] = round(paid_total, 2)
+                entry["remaining"] = round(fixed_amount - paid_total, 2)
+            unpaid.append(entry)
+    # Deduplicate by child_name (case-insensitive)
+    seen = set()
+    unique_unpaid = []
+    for u in unpaid:
+        key = u["child_name"].lower()
+        if key not in seen:
+            seen.add(key)
+            unique_unpaid.append(u)
+    unique_unpaid.sort(key=lambda u: (u["classroom"], u["child_name"]))
+
     return {
         "id": fund.id, "name": fund.name, "friendly_name": fund.friendly_name,
         "code": fund.code, "status": fund.status, "type": fund.type,
         "payments": [
-            {"id": p.id, "parent": p.payer_name, "child": p.child_name,
-             "amount": p.amount, "status": p.status, "date": p.submitted_at}
+            {
+                "id": p.id,
+                "payer_jid": p.payer_jid,
+                "parent": p.payer_name,
+                "child": p.child_name,
+                "amount": p.amount,
+                "status": p.status,
+                "date": p.submitted_at,
+                "confirmation_code": p.confirmation_code,
+                "receipt_media_url": p.receipt_media_url,
+                "order_items": [
+                    {"product": oi.product.name if oi.product else "?", "quantity": oi.quantity, "subtotal": oi.subtotal}
+                    for oi in p.order_items
+                ] if p.order_items else [],
+            }
             for p in payments
         ],
+        "unpaid": unique_unpaid,
     }
+
+
+class PaymentStatusUpdate(BaseModel):
+    status: str  # rejected | confirmed | pending | flagged
+
+
+@router.patch("/payments/{payment_id}")
+async def update_payment_status(
+    payment_id: int,
+    req: PaymentStatusUpdate,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    require_write_access(admin)
+    if req.status not in ("rejected", "confirmed", "pending", "flagged"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    payment = db.query(models.Payment).filter_by(id=payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404)
+    payment.status = req.status
+    if req.status == "rejected":
+        payment.flag_reason = "admin_rejected"
+    elif payment.flag_reason == "admin_rejected":
+        payment.flag_reason = None
+    db.commit()
+    return {"status": "updated"}
 
 
 @router.patch("/{fundraiser_id}")
 async def update_fundraiser(fundraiser_id: int, req: FundraiserUpdate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
     if not fund: raise HTTPException(status_code=404)
 
     if req.status:
         fund.status = req.status
         if req.status == "closed": fund.closed_at = datetime.utcnow()
-    if req.name: fund.name = req.name
-    if req.friendly_name: fund.friendly_name = req.friendly_name
+    if req.name:
+        fund.name = req.name
+        fund.friendly_name = req.name
     if req.audience_classroom_ids is not None:
         fund.audience_classroom_ids = req.audience_classroom_ids
 
@@ -181,6 +300,7 @@ async def update_fundraiser(fundraiser_id: int, req: FundraiserUpdate, db: Sessi
 
 @router.delete("/{fundraiser_id}")
 async def delete_fundraiser(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
     if not fund: raise HTTPException(status_code=404)
 

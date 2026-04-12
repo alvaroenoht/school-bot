@@ -6,9 +6,9 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "EduLink Admin",
-  description: "SchoolBot Management Panel",
+  description: "EduLink Management Panel",
   manifest: "/manifest.json",
-  themeColor: "#4F46E5",
+  themeColor: "#7C3AED",
   viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0",
 };
 
@@ -21,11 +21,22 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <link rel="icon" href="/favicon.ico" />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="EduLink" />
+        <meta name="mobile-web-app-capable" content="yes" />
       </head>
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        {children}
+        <script dangerouslySetInnerHTML={{ __html: `
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+              navigator.serviceWorker.register('/sw.js');
+            });
+          }
+        `}} />
+      </body>
     </html>
   );
 }

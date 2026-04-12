@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey,
-    Integer, JSON, String, Text, UniqueConstraint,
+    Integer, JSON, String, Text, Time, UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -14,6 +14,7 @@ class Classroom(Base):
 
     id                  = Column(Integer, primary_key=True, index=True)
     name                = Column(String, nullable=False)
+    display_name        = Column(String, nullable=True)  # admin-renameable; falls back to name
     parent_id           = Column(Integer, ForeignKey("classrooms.id"), nullable=True) # For nesting
     school_url          = Column(String, default="https://lasalle.gsepty.com")
     whatsapp_group_id   = Column(String, nullable=True)
@@ -181,8 +182,9 @@ class KnownContact(Base):
 
     id              = Column(Integer, primary_key=True, index=True)
     jid             = Column(String, unique=True, nullable=False, index=True)
+    phone           = Column(String, nullable=True)  # resolved real phone number
     name            = Column(String, nullable=False)
-    child_name      = Column(String, nullable=False)
+    child_name      = Column(String, nullable=True)  # legacy — migrated to KnownContactGroup
     source_group_id = Column(String, nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
 
@@ -194,11 +196,13 @@ class KnownContactGroup(Base):
     __tablename__ = "known_contact_groups"
     __table_args__ = (UniqueConstraint("contact_jid", "classroom_id", name="uq_kcg_contact_classroom"),)
 
-    id           = Column(Integer, primary_key=True, index=True)
-    contact_jid  = Column(String, ForeignKey("known_contacts.jid"), nullable=False, index=True)
-    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=False)
-    active       = Column(Boolean, default=True)
-    synced_at    = Column(DateTime, default=datetime.utcnow)
+    id              = Column(Integer, primary_key=True, index=True)
+    contact_jid     = Column(String, ForeignKey("known_contacts.jid"), nullable=False, index=True)
+    classroom_id    = Column(Integer, ForeignKey("classrooms.id"), nullable=False)
+    child_name      = Column(String, nullable=True)
+    is_primary_payer = Column(Boolean, default=False)
+    active          = Column(Boolean, default=True)
+    synced_at       = Column(DateTime, default=datetime.utcnow)
 
     contact   = relationship("KnownContact", back_populates="groups")
     classroom = relationship("Classroom")
@@ -210,6 +214,8 @@ class Fundraiser(Base):
 
     id                      = Column(Integer, primary_key=True, index=True)
     name                    = Column(String, nullable=False)
+    friendly_name           = Column(String, nullable=True)
+    code                    = Column(String, nullable=True)
     account_number          = Column(String, nullable=False)
     type                    = Column(String, nullable=False)
     fixed_amount            = Column(String, nullable=True)
@@ -302,7 +308,7 @@ class Form(Base):
     closes_at             = Column(DateTime, nullable=True)
     archived_at           = Column(DateTime, nullable=True)
     send_group_reminders  = Column(Boolean, default=True)
-    reminder_interval_days = Column(Integer, default=2)
+    reminder_interval_days = Column(Integer, default=7)
 
     questions   = relationship("FormQuestion",   back_populates="form",
                                order_by="FormQuestion.order", cascade="all, delete-orphan")
@@ -432,3 +438,42 @@ class AdminSession(Base):
     otp_code    = Column(String, nullable=False)
     expires_at  = Column(DateTime, nullable=False)
     created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class SeducaGroup(Base):
+    """Assignment group discovered from the Seduca school portal.
+    Shared across all admins — any admin can link one to their classroom.
+    """
+    __tablename__ = "seduca_groups"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    seduca_group_id  = Column(String, unique=True, nullable=False, index=True)  # portal ID — dedupe key
+    name             = Column(String, nullable=False)
+    discovered_by_id = Column(Integer, ForeignKey("parents.id"), nullable=True)
+    last_fetched_at  = Column(DateTime, nullable=True)
+    cached_data      = Column(JSON, nullable=True)  # latest assignments snapshot
+
+    link = relationship("ClassroomSeducaLink", back_populates="seduca_group", uselist=False)
+
+
+class ClassroomSeducaLink(Base):
+    """1:1 binding between a Classroom (WhatsApp group) and a SeducaGroup.
+    Controls when summaries are sent and whether DM Q&A is enabled.
+    """
+    __tablename__ = "classroom_seduca_links"
+    __table_args__ = (
+        UniqueConstraint("classroom_id", name="uq_csl_classroom"),
+        UniqueConstraint("seduca_group_id", name="uq_csl_seduca_group"),
+    )
+
+    id              = Column(Integer, primary_key=True, index=True)
+    classroom_id    = Column(Integer, ForeignKey("classrooms.id"), nullable=False)
+    seduca_group_id = Column(Integer, ForeignKey("seduca_groups.id"), nullable=False)
+    summary_time    = Column(Time, nullable=False)   # local time HH:MM
+    summary_day     = Column(Integer, default=0)     # 0=Monday, 6=Sunday
+    answer_dms      = Column(Boolean, default=True)
+    created_by_id   = Column(Integer, ForeignKey("parents.id"), nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    classroom    = relationship("Classroom")
+    seduca_group = relationship("SeducaGroup", back_populates="link")

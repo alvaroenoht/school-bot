@@ -137,6 +137,32 @@ class WahaClient:
             logger.error(f"get_group_participants failed for {group_id}: {e}")
             return []
 
+    def list_groups(self) -> list[dict]:
+        """Return all WhatsApp groups the bot session has joined."""
+        url = f"{self.base_url}/api/{self.session}/groups"
+        try:
+            r = requests.get(url, headers=self.headers, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as e:
+            logger.error(f"list_groups failed: {e}")
+            return []
+
+    def join_group_via_link(self, invite_link: str) -> dict | None:
+        """Join a WhatsApp group using an invite link (chat.whatsapp.com/...)."""
+        # Extract the invite code from the link
+        code = invite_link.split("/")[-1].strip()
+        url = f"{self.base_url}/api/{self.session}/groups/join"
+        try:
+            r = requests.post(url, json={"code": code}, headers=self.headers, timeout=20)
+            if r.status_code == 200:
+                return r.json()
+            logger.warning(f"join_group_via_link got {r.status_code}: {r.text[:200]}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"join_group_via_link failed: {e}")
+            return None
+
     def set_profile_name(self, name: str) -> bool:
         url = f"{self.base_url}/api/{self.session}/profile/name"
         try:

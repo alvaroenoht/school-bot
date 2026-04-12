@@ -1,14 +1,27 @@
+import secrets
+import string
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db import models
-from app.api.admin.auth import get_current_admin
+from app.api.admin.auth import get_current_admin, require_write_access
 from app.whatsapp.client import WahaClient
+from app.bot.notifications import notify_form_created
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/forms", tags=["forms"])
 wa = WahaClient()
+
+
+def _generate_form_code(db: Session) -> str:
+    """Generate a unique short form code like FORM-XK4M2."""
+    alphabet = string.ascii_uppercase + string.digits
+    while True:
+        suffix = "".join(secrets.choice(alphabet) for _ in range(5))
+        code = f"FORM-{suffix}"
+        if not db.query(models.Form).filter_by(form_code=code).first():
+            return code
 
 class QuestionSchema(BaseModel):
     text: str
@@ -31,13 +44,16 @@ class FormUpdate(BaseModel):
 
 @router.post("")
 async def create_form(req: FormCreate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     if not admin["is_super_admin"]:
-        my_classrooms = [r["classroom_id"] for r in admin["roles"]]
-        if any(cid not in my_classrooms for cid in req.audience_classroom_ids):
+        my_write_classrooms = [r["classroom_id"] for r in admin["roles"] if r["role"] != "soporte"]
+        if any(cid not in my_write_classrooms for cid in req.audience_classroom_ids):
             raise HTTPException(status_code=403, detail="Not authorized")
 
+    form_code = _generate_form_code(db)
     db_form = models.Form(
         title=req.title, description=req.description, purpose=req.purpose,
+        form_code=form_code,
         created_by_jid=admin["phone"] + "@c.us", status="open"
     )
     db.add(db_form)
@@ -47,10 +63,12 @@ async def create_form(req: FormCreate, db: Session = Depends(get_db), admin: dic
     for q in req.questions:
         db.add(models.FormQuestion(form_id=db_form.id, text=q.text, type=q.type, required=q.required, options=q.options, order=q.order))
     db.commit()
-    return {"id": db_form.id, "status": "open"}
+    notify_form_created(db_form, db)
+    return {"id": db_form.id, "form_code": form_code, "status": "open"}
 
 @router.post("/{form_id}/remind")
 async def remind_incomplete(form_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     form = db.query(models.Form).filter_by(id=form_id).first()
     if not form: raise HTTPException(status_code=404)
     
@@ -74,14 +92,17 @@ async def remind_incomplete(form_id: int, db: Session = Depends(get_db), admin: 
 @router.get("")
 async def list_forms(
     status: Optional[str] = None,
+    include_closed: bool = False,
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
     forms = db.query(models.Form).all()
     if status:
         forms = [f for f in forms if f.status == status]
+    elif include_closed:
+        forms = [f for f in forms if f.status not in ("archived",)]
     else:
-        forms = [f for f in forms if f.status != "archived"]
+        forms = [f for f in forms if f.status in ("open", "active")]
 
     result = []
     for f in forms:
@@ -94,6 +115,7 @@ async def list_forms(
         submitted = db.query(models.FormSubmission).filter_by(form_id=f.id, status="submitted").count()
         result.append({
             "id": f.id, "title": f.title, "purpose": f.purpose, "status": f.status,
+            "form_code": f.form_code,
             "submitted_count": submitted,
             "audience_count": audience_count,
             "completion_pct": round(submitted / audience_count * 100) if audience_count else 0,
@@ -111,13 +133,59 @@ async def get_report(form_id: int, db: Session = Depends(get_db), admin: dict = 
         "submissions": [{"id": s.id, "parent": s.respondent_name, "student": s.student.name if s.student else "N/A", "date": s.submitted_at, "status": s.status} for s in subs]
     }
 
+@router.get("/{form_id}/submissions/{submission_id}")
+async def get_submission(
+    form_id: int,
+    submission_id: int,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    sub = db.query(models.FormSubmission).filter_by(id=submission_id, form_id=form_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    answers = []
+    for a in sub.answers:
+        q = a.question
+        answers.append({
+            "question": q.text if q else "?",
+            "type": q.type if q else "text",
+            "value": a.value,
+            "value_json": a.value_json,
+        })
+    return {
+        "id": sub.id,
+        "respondent_name": sub.respondent_name,
+        "student": sub.student.name if sub.student else None,
+        "status": sub.status,
+        "submitted_at": sub.submitted_at,
+        "answers": answers,
+    }
+
+
 @router.get("/{form_id}/questions")
 async def get_questions(form_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
     questions = db.query(models.FormQuestion).filter_by(form_id=form_id).order_by(models.FormQuestion.order).all()
     return [{"id": q.id, "text": q.text, "type": q.type, "required": q.required, "options": q.options, "order": q.order} for q in questions]
 
+@router.delete("/{form_id}/submissions/{submission_id}")
+async def delete_submission(
+    form_id: int,
+    submission_id: int,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    require_write_access(admin)
+    sub = db.query(models.FormSubmission).filter_by(id=submission_id, form_id=form_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    db.delete(sub)
+    db.commit()
+    return {"status": "deleted"}
+
+
 @router.patch("/{form_id}")
 async def update_form(form_id: int, req: FormUpdate, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     form = db.query(models.Form).filter_by(id=form_id).first()
     if not form: raise HTTPException(status_code=404)
 
@@ -133,6 +201,7 @@ async def update_form(form_id: int, req: FormUpdate, db: Session = Depends(get_d
 
 @router.delete("/{form_id}")
 async def delete_form(form_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
     form = db.query(models.Form).filter_by(id=form_id).first()
     if not form: raise HTTPException(status_code=404)
 

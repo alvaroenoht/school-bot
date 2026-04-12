@@ -325,9 +325,19 @@ async def _sync_known_contact_groups_job():
                 db.add(models.KnownContactGroup(
                     contact_jid=contact.jid,
                     classroom_id=classroom.id,
+                    child_name=contact.child_name,  # migrate legacy child_name
                     active=True,
                     synced_at=now,
                 ))
+        db.commit()
+
+        # Backfill: copy KnownContact.child_name → KCG.child_name where KCG is NULL
+        for kcg in db.query(models.KnownContactGroup).filter(
+            models.KnownContactGroup.child_name.is_(None)
+        ).all():
+            contact = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
+            if contact and contact.child_name:
+                kcg.child_name = contact.child_name
         db.commit()
 
         # For each linked classroom sync live membership
@@ -339,21 +349,33 @@ async def _sync_known_contact_groups_job():
         for classroom in classrooms:
             try:
                 participants = wa.get_group_participants(classroom.whatsapp_group_id)
-                # Build a set of resolvable identifiers for fast lookup
-                participant_ids: set[str] = set()
+                # Build phone set from @c.us participant JIDs
+                participant_phones: set[str] = set()
                 for p in participants:
-                    participant_ids.add(p)
-                    phone = wa.resolve_phone(p)
-                    participant_ids.add(f"{phone}@c.us")
+                    phone = p.replace("@c.us", "").replace("@lid", "")
+                    participant_phones.add(phone)
 
                 for kcg in db.query(models.KnownContactGroup).filter_by(classroom_id=classroom.id).all():
                     contact = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
                     if not contact:
                         continue
-                    phone = wa.resolve_phone(contact.jid)
-                    is_member = contact.jid in participant_ids or f"{phone}@c.us" in participant_ids
+                    # Match: if contact has stored phone, check directly; otherwise try resolve
+                    contact_phone = contact.phone or contact.jid.replace("@c.us", "").replace("@lid", "")
+                    is_member = contact_phone in participant_phones
+                    if not is_member and "@lid" in contact.jid:
+                        # Try resolving through WAHA
+                        resolved = wa.resolve_phone(contact.jid)
+                        if resolved and resolved != contact.jid.replace("@lid", ""):
+                            contact.phone = resolved
+                            is_member = resolved in participant_phones
                     kcg.active = is_member
                     kcg.synced_at = now
+
+                # Backfill phone for contacts where @c.us JID has the phone
+                for kcg in db.query(models.KnownContactGroup).filter_by(classroom_id=classroom.id).all():
+                    contact = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
+                    if contact and not contact.phone and "@c.us" in contact.jid:
+                        contact.phone = contact.jid.replace("@c.us", "")
 
                 db.commit()
                 logger.info("KCG sync classroom_id=%d participants=%d", classroom.id, len(participants))

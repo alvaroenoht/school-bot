@@ -70,7 +70,7 @@ async def handle(
     elif session.step == "awaiting_child_name":
         data["child_name"] = text.strip()
 
-        # Save KnownContact
+        # Save KnownContact (child_name stored as fallback; primary is on KCG)
         contact = models.KnownContact(
             jid=raw_jid,
             name=data["name"],
@@ -80,19 +80,27 @@ async def handle(
         db.add(contact)
         db.flush()
 
-        # Create KnownContactGroup row for the source group
+        # Create KnownContactGroup row with child_name for the source classroom
         sgid = data.get("source_group_id")
         if sgid:
             classroom = db.query(models.Classroom).filter_by(
                 whatsapp_group_id=sgid, is_active=True
             ).first()
             if classroom:
-                db.add(models.KnownContactGroup(
-                    contact_jid=raw_jid,
-                    classroom_id=classroom.id,
-                    active=True,
-                    synced_at=datetime.utcnow(),
-                ))
+                existing = db.query(models.KnownContactGroup).filter_by(
+                    contact_jid=raw_jid, classroom_id=classroom.id
+                ).first()
+                if existing:
+                    existing.child_name = data["child_name"]
+                    existing.active = True
+                else:
+                    db.add(models.KnownContactGroup(
+                        contact_jid=raw_jid,
+                        classroom_id=classroom.id,
+                        child_name=data["child_name"],
+                        active=True,
+                        synced_at=datetime.utcnow(),
+                    ))
 
         pending = data.get("pending_command")
         db.delete(session)
@@ -107,12 +115,12 @@ async def handle(
         wa.send_text(
             chat_id,
             f"✅ ¡Listo, *{data['name']}*!\n\n"
-            "📌 Para consultas sobre tareas y actividades, por favor *pregunta en el grupo* "
-            "y mencioname con @bot — así todos se benefician de la respuesta. "
-            "Este servicio es mantenido por un solo padre de familia. 🙏\n\n"
-            "En este chat solo puedo ayudarte con:\n"
-            "  • `/pagar <actividad>` — pagar una actividad escolar\n"
-            "  • `FORM-XXXXX` — responder un formulario del colegio",
+            "📌 Para consultas sobre tareas, *pregunta en el grupo* "
+            "y mencioname con @bot — así todos se benefician. 🙏\n\n"
+            "En este chat puedo ayudarte con:\n"
+            "  • Escribe el *código* de una actividad o formulario para iniciar\n"
+            "  • `pagar` — ver tus pendientes\n"
+            "  • `/help` — ver todos los comandos",
         )
 
         # Resume pending pay command

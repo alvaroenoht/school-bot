@@ -280,7 +280,12 @@ def _start_form(
                     class_entries.append((cls, rep_student.id if rep_student else None))
 
             if len(class_entries) > 1:
-                child_hint = f" _(hijo/a: {contact.child_name})_" if contact and contact.child_name else ""
+                # child_name now lives on KCG per-classroom
+                child_names = []
+                if contact:
+                    kcgs = db.query(models.KnownContactGroup).filter_by(contact_jid=contact.jid, active=True).all()
+                    child_names = [kcg.child_name for kcg in kcgs if kcg.child_name]
+                child_hint = f" _(hijo/a: {', '.join(child_names)})_" if child_names else ""
                 opts = "\n".join(
                     f"  `{i+1}` — {cls.name}"
                     for i, (cls, sid) in enumerate(class_entries)

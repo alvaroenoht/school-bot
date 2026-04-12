@@ -5,9 +5,9 @@ import {
   Lock, MessageSquare, Plus, Activity, LayoutList, Users, Calendar,
   ChevronRight, Settings, LogOut, X, Tag, FileText, CalendarPlus,
   ChevronLeft, Filter, Edit2, User, CreditCard, Check, Trash2,
-  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home
+  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import api from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -20,14 +20,14 @@ const FORM_PURPOSES = ['intake', 'survey', 'event_registration', 'volunteer_sign
 // ─── Translations ─────────────────────────────────────────────────────────────
 const TRANSLATIONS = {
   en: {
-    welcome: "SchoolBot Admin", phone_placeholder: "Phone number",
+    welcome: "EduLink Admin", phone_placeholder: "Phone number",
     code_placeholder: "6-digit code", get_code: "Request Code", verify_code: "Login",
     dashboard: "Dashboard", fundraisers: "Fundraisers", forms: "Forms",
     groups: "Groups", events: "Events", assistant: "AI Assistant",
     logout: "Logout", create: "Create", activity: "Fundraiser",
     form: "Form", event: "Event", members: "Group Members",
     parent_name: "Parent Name", student_name: "Student Name",
-    primary_payer: "Primary Payer", save: "Save", settings: "Settings",
+    primary_payer: "Main Contact", save: "Save", settings: "Settings",
     accounts: "Payment Accounts", edulink_setup: "School Portal (EduLink)",
     remind: "Send Reminders", reopen: "Reopen", close: "Close",
     report: "Live Report", fund_name: "Activity Name", fund_account: "Deposit To",
@@ -46,23 +46,27 @@ const TRANSLATIONS = {
     event_date: "Date", event_location: "Location",
     portal_user: "Portal Username", portal_pass: "Portal Password",
     reminder_sent: "Reminders Sent!", assistant_placeholder: "Ask about your groups...",
-    new_fundraiser: "New Fundraiser", new_form: "New Form", new_event: "New Event",
+    new_fundraiser: "New Fundraiser", new_form: "New Form", new_event: "New Event", new_classroom: "New Classroom",
     no_items: "No items yet", loading: "Loading...", send: "Send",
     account_label: "Account Label", account_type: "Type", account_details: "Details",
     add_account: "Add Account", is_default: "Set as Default",
     bank: "Bank Transfer", phone_yappy: "Yappy (Phone)", submissions: "Submissions",
     payments: "Payments", back: "Back", delete: "Delete", edit: "Edit",
     confirm_delete: "Delete?", language: "Language",
+    see_all: "See all", show_active: "Active only",
+    delegates: "Delegates", add_delegate: "Add Delegate",
+    payment_slip: "Payment Slip", order_items: "Items Ordered",
+    answers: "Answers",
   },
   es: {
-    welcome: "Admin SchoolBot", phone_placeholder: "Celular",
+    welcome: "EduLink Admin", phone_placeholder: "Celular",
     code_placeholder: "Código de 6 dígitos", get_code: "Solicitar Código", verify_code: "Entrar",
     dashboard: "Resumen", fundraisers: "Actividades", forms: "Formularios",
     groups: "Grupos", events: "Eventos", assistant: "Asistente IA",
     logout: "Salir", create: "Crear", activity: "Actividad de Pago",
     form: "Formulario", event: "Evento", members: "Miembros",
     parent_name: "Nombre del Padre", student_name: "Nombre del Estudiante",
-    primary_payer: "Responsable Pago", save: "Guardar", settings: "Configuración",
+    primary_payer: "Principal", save: "Guardar", settings: "Configuración",
     accounts: "Cuentas de Pago", edulink_setup: "Portal Escolar (EduLink)",
     remind: "Enviar Recordatorios", reopen: "Reabrir", close: "Cerrar",
     report: "Reporte en Vivo", fund_name: "Nombre de Actividad", fund_account: "Depositar a",
@@ -81,13 +85,17 @@ const TRANSLATIONS = {
     event_date: "Fecha", event_location: "Ubicación",
     portal_user: "Usuario del Portal", portal_pass: "Contraseña del Portal",
     reminder_sent: "¡Recordatorios Enviados!", assistant_placeholder: "Pregunta sobre tus grupos...",
-    new_fundraiser: "Nueva Actividad", new_form: "Nuevo Formulario", new_event: "Nuevo Evento",
+    new_fundraiser: "Nueva Actividad", new_form: "Nuevo Formulario", new_event: "Nuevo Evento", new_classroom: "Nuevo Salón",
     no_items: "Sin elementos", loading: "Cargando...", send: "Enviar",
     account_label: "Etiqueta", account_type: "Tipo", account_details: "Detalles",
     add_account: "Agregar Cuenta", is_default: "Establecer por Defecto",
     bank: "Transferencia Bancaria", phone_yappy: "Yappy (Teléfono)", submissions: "Respuestas",
     payments: "Pagos", back: "Atrás", delete: "Eliminar", edit: "Editar",
     confirm_delete: "¿Eliminar?", language: "Idioma",
+    see_all: "Ver todos", show_active: "Solo activos",
+    delegates: "Delegados", add_delegate: "Agregar Delegado",
+    payment_slip: "Comprobante", order_items: "Artículos",
+    answers: "Respuestas",
   }
 } as const;
 
@@ -119,8 +127,8 @@ export default function AdminApp() {
   const [selectedReport, setSelectedReport] = useState<any>(null);
   const [reportData, setReportData] = useState<any>(null);
   const [editingMember, setEditingMember] = useState<any>(null);
-  const [editFirstName, setEditFirstName] = useState('');
-  const [editLastName, setEditLastName] = useState('');
+  const [editChildName, setEditChildName] = useState('');
+  const [editParents, setEditParents] = useState<any[]>([]);
 
   // Modals
   const [showCreateMenu, setShowCreateMenu] = useState(false);
@@ -128,10 +136,23 @@ export default function AdminApp() {
   const [showNewForm, setShowNewForm] = useState(false);
   const [showNewEvent, setShowNewEvent] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [showNewClassroom, setShowNewClassroom] = useState(false);
+  const [newClsName, setNewClsName] = useState('');
+
+  // Group detail
+  const [showGroupConfig, setShowGroupConfig] = useState<any>(false);
+  const [groupUnidentified, setGroupUnidentified] = useState<any[]>([]);
+  const [showUnidentified, setShowUnidentified] = useState(false);
+
+  // Delegate assignment
+  const [showAssignRole, setShowAssignRole] = useState(false);
+  const [assignPhone, setAssignPhone] = useState('');
+  const [assignRole, setAssignRole] = useState('delegado');
+  const [classroomRoles, setClassroomRoles] = useState<any[]>([]);
+  const [allRoles, setAllRoles] = useState<any[]>([]);
 
   // Fundraiser form
   const [fName, setFName] = useState('');
-  const [fFriendlyName, setFFriendlyName] = useState('');
   const [fType, setFType] = useState<'fixed' | 'variable'>('fixed');
   const [fAmount, setFAmount] = useState('');
   const [fAccountId, setFAccountId] = useState('');
@@ -159,6 +180,38 @@ export default function AdminApp() {
   const [accDetails, setAccDetails] = useState('');
   const [accDefault, setAccDefault] = useState(false);
 
+  // Seduca creds
+  const [seducaUser, setSeducaUser] = useState('');
+  const [seducaPass, setSeducaPass] = useState('');
+  const [seducaGroups, setSeducaGroups] = useState<any[]>([]);
+  const [seducaSaving, setSeducaSaving] = useState(false);
+  const [seducaHasCreds, setSeducaHasCreds] = useState(false);
+  const [seducaCurrentUser, setSeducaCurrentUser] = useState<string | null>(null);
+
+  // WhatsApp group binding modal
+  const [showBindModal, setShowBindModal] = useState(false);
+  const [bindingClassroomId, setBindingClassroomId] = useState<number | null>(null);
+  const [bindInviteLink, setBindInviteLink] = useState('');
+  const [wahaGroups, setWahaGroups] = useState<any[]>([]);
+  const [wahaGroupsLoading, setWahaGroupsLoading] = useState(false);
+
+  // Seduca link modal (per-group)
+  const [showSeducaLinkModal, setShowSeducaLinkModal] = useState(false);
+  const [seducaLinkClassroomId, setSeducaLinkClassroomId] = useState<number | null>(null);
+  const [seducaLinkTime, setSeducaLinkTime] = useState('07:00');
+  const [seducaLinkDay, setSeducaLinkDay] = useState(0);
+  const [seducaLinkDms, setSeducaLinkDms] = useState(true);
+  const [selectedSeducaGroupId, setSelectedSeducaGroupId] = useState<number | null>(null);
+  const [groupSeducaLinks, setGroupSeducaLinks] = useState<Record<number, any>>({});
+
+  // Payment group modal
+  const [selectedPayerGroup, setSelectedPayerGroup] = useState<any>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+
+  // Form submission detail modal
+  const [selectedSubmission, setSelectedSubmission] = useState<any>(null);
+  const [submissionDetail, setSubmissionDetail] = useState<any>(null);
+
   // Chat
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'bot'; text: string }[]>([]);
@@ -177,7 +230,13 @@ export default function AdminApp() {
     }
   }, []);
 
-  useEffect(() => { if (step === 'dashboard') fetchAll(); }, [step]);
+  useEffect(() => {
+    if (step === 'dashboard') {
+      fetchAll();
+      fetchSeducaCreds();
+      api.get('/classrooms/all-roles').then(r => setAllRoles(r.data || [])).catch(() => {});
+    }
+  }, [step]);
 
   // Auto-clear error after 4s
   useEffect(() => {
@@ -192,8 +251,8 @@ export default function AdminApp() {
     const afo = opts?.archivedForms ?? showArchivedForms;
     try {
       const [fr, fo, cl, ev, ac] = await Promise.all([
-        api.get(af ? '/fundraisers?status=closed' : '/fundraisers'),
-        api.get(afo ? '/forms?status=closed' : '/forms'),
+        api.get(af ? '/fundraisers?include_closed=true' : '/fundraisers'),
+        api.get(afo ? '/forms?include_closed=true' : '/forms'),
         api.get('/classrooms'),
         api.get('/events'),
         api.get('/auth/accounts'),
@@ -242,10 +301,119 @@ export default function AdminApp() {
   };
 
   const selectGroup = async (g: any) => {
-    setSelectedGroup(g); setGroupMembers([]); setGroupMembersLoading(true);
-    try { const r = await api.get(`/classrooms/${g.id}/members`); setGroupMembers(r.data || []); }
-    catch (e) { console.error(e); }
+    setSelectedGroup(g); setGroupMembers([]); setGroupUnidentified([]); setGroupMembersLoading(true);
+    setShowGroupConfig(false); setShowUnidentified(false);
+    try {
+      const [mr, lr] = await Promise.all([
+        api.get(`/classrooms/${g.id}/members`),
+        api.get(`/classrooms/${g.id}/seduca-link`).catch(() => ({ data: { linked: false } })),
+      ]);
+      const data = mr.data || {};
+      setGroupMembers(data.members || []);
+      setGroupUnidentified(data.unidentified || []);
+      if (lr.data.linked) setGroupSeducaLinks(prev => ({ ...prev, [g.id]: lr.data }));
+    } catch (e) { console.error(e); }
     finally { setGroupMembersLoading(false); }
+  };
+
+  const fetchSeducaCreds = async () => {
+    try {
+      const r = await api.get('/me/seduca-creds');
+      setSeducaHasCreds(r.data.has_creds);
+      setSeducaCurrentUser(r.data.username);
+      if (r.data.username) setSeducaUser(r.data.username);
+    } catch {}
+  };
+
+  const fetchSeducaGroups = async () => {
+    try {
+      const r = await api.get('/seduca/groups');
+      setSeducaGroups(r.data || []);
+    } catch {}
+  };
+
+  const saveSeducaCreds = async () => {
+    if (!seducaUser || !seducaPass) return;
+    setSeducaSaving(true); setError('');
+    try {
+      const r = await api.put('/me/seduca-creds', { username: seducaUser, password: seducaPass });
+      setSeducaHasCreds(true);
+      setSeducaCurrentUser(seducaUser);
+      setSeducaPass('');
+      setSeducaGroups(r.data.groups || []);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Error al guardar credenciales');
+    } finally { setSeducaSaving(false); }
+  };
+
+  const openBindModal = (classroomId: number) => {
+    setBindingClassroomId(classroomId);
+    setBindInviteLink('');
+    setShowBindModal(true);
+  };
+
+  const bindGroupViaLink = async () => {
+    if (!bindingClassroomId || !bindInviteLink.trim()) return;
+    setWahaGroupsLoading(true);
+    try {
+      await api.post(`/classrooms/${bindingClassroomId}/bind-group-link`, { invite_link: bindInviteLink.trim() });
+      setShowBindModal(false);
+      setBindInviteLink('');
+      const r = await api.get('/classrooms');
+      setClassrooms(r.data || []);
+      const updated = (r.data || []).find((c: any) => c.id === bindingClassroomId);
+      if (updated) setSelectedGroup(updated);
+      setBindingClassroomId(null);
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error al vincular grupo'); }
+    finally { setWahaGroupsLoading(false); }
+  };
+
+  const unbindGroup = async (classroomId: number) => {
+    try {
+      await api.post(`/classrooms/${classroomId}/unbind-group`);
+      const r = await api.get('/classrooms');
+      setClassrooms(r.data || []);
+      const updated = (r.data || []).find((c: any) => c.id === classroomId);
+      if (updated) setSelectedGroup(updated);
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error al desvincular'); }
+  };
+
+  const openSeducaLinkModal = async (classroomId: number) => {
+    setSeducaLinkClassroomId(classroomId);
+    setShowSeducaLinkModal(true);
+    setSelectedSeducaGroupId(null);
+    if (seducaGroups.length === 0) await fetchSeducaGroups();
+    try {
+      const r = await api.get(`/classrooms/${classroomId}/seduca-link`);
+      if (r.data.linked) {
+        setGroupSeducaLinks(prev => ({ ...prev, [classroomId]: r.data }));
+        setSeducaLinkTime(r.data.summary_time || '07:00');
+        setSeducaLinkDay(r.data.summary_day ?? 0);
+        setSeducaLinkDms(r.data.answer_dms ?? true);
+      }
+    } catch {}
+  };
+
+  const saveSeducaLink = async () => {
+    if (!seducaLinkClassroomId || !selectedSeducaGroupId) return;
+    try {
+      await api.post(`/classrooms/${seducaLinkClassroomId}/seduca-link`, {
+        seduca_group_id: selectedSeducaGroupId,
+        summary_time: seducaLinkTime,
+        summary_day: seducaLinkDay,
+        answer_dms: seducaLinkDms,
+      });
+      const r = await api.get(`/classrooms/${seducaLinkClassroomId}/seduca-link`);
+      setGroupSeducaLinks(prev => ({ ...prev, [seducaLinkClassroomId]: r.data }));
+      setShowSeducaLinkModal(false);
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error al vincular Seduca'); }
+  };
+
+  const unlinkSeduca = async (classroomId: number) => {
+    try {
+      await api.delete(`/classrooms/${classroomId}/seduca-link`);
+      setGroupSeducaLinks(prev => { const next = { ...prev }; delete next[classroomId]; return next; });
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
   };
 
   const selectReport = async (item: any, type: 'fundraiser' | 'form') => {
@@ -286,23 +454,31 @@ export default function AdminApp() {
 
   const openMemberEdit = (member: any) => {
     setEditingMember(member);
-    const parts = (member.name || '').split(' ');
-    setEditFirstName(parts[0] || '');
-    setEditLastName(parts.slice(1).join(' ') || '');
+    setEditChildName(member.child_name && member.child_name !== '—' ? member.child_name : '');
+    setEditParents((member.parents || []).map((p: any) => ({
+      ...p,
+      editName: p.name || '',
+      is_primary_payer: p.is_primary_payer || false,
+    })));
   };
 
   const saveMember = async () => {
     if (!editingMember || !selectedGroup) return;
     setLoading(true);
     try {
-      await api.patch(`/classrooms/${selectedGroup.id}/members/${editingMember.id}`, {
-        first_name: editFirstName,
-        last_name: editLastName,
-      });
+      const updates = editParents.map((p: any) =>
+        api.patch(`/classrooms/${selectedGroup.id}/contacts/${p.id}`, {
+          child_name: editChildName.trim() || null,
+          name: p.editName.trim() || null,
+          is_primary_payer: p.is_primary_payer,
+        })
+      );
+      await Promise.all(updates);
       setEditingMember(null);
-      // Refresh members
       const r = await api.get(`/classrooms/${selectedGroup.id}/members`);
-      setGroupMembers(r.data || []);
+      const data = r.data || {};
+      setGroupMembers(data.members || []);
+      setGroupUnidentified(data.unidentified || []);
     } catch { setError('Error saving'); }
     finally { setLoading(false); }
   };
@@ -315,7 +491,6 @@ export default function AdminApp() {
       const selectedAcc = accounts.find(a => String(a.id) === fAccountId);
       await api.post('/fundraisers', {
         name: fName,
-        friendly_name: fFriendlyName || fName,
         account_number: selectedAcc?.details || fAccountId,
         type: fType,
         fixed_amount: fType === 'fixed' ? fAmount : null,
@@ -323,7 +498,7 @@ export default function AdminApp() {
         products: fType === 'variable' ? fProducts.filter(p => p.name) : null,
       });
       setShowNewFundraiser(false);
-      setFName(''); setFFriendlyName(''); setFAmount(''); setFAudience([]); setFProducts([{ name: '', price: '' }]);
+      setFName(''); setFAmount(''); setFAudience([]); setFProducts([{ name: '', price: '' }]);
       await fetchAll();
       goTab('fundraisers');
     } catch { setError('Error creating'); }
@@ -377,6 +552,103 @@ export default function AdminApp() {
     if (!confirm(t.confirm_delete)) return;
     try { await api.delete(`/auth/accounts/${id}`); await fetchAll(); }
     catch { setError('Error'); }
+  };
+
+  const createClassroom = async () => {
+    if (!newClsName.trim()) return;
+    setLoading(true); setError('');
+    try {
+      await api.post('/classrooms', { name: newClsName.trim(), display_name: newClsName.trim() });
+      setNewClsName('');
+      setShowNewClassroom(false);
+      const r = await api.get('/classrooms');
+      setClassrooms(r.data || []);
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error al crear salón'); }
+    finally { setLoading(false); }
+  };
+
+  const openAssignRole = async (classroomId: number) => {
+    setBindingClassroomId(classroomId);
+    setAssignPhone(''); setAssignRole('admin');
+    setShowAssignRole(true);
+    try {
+      const r = await api.get(`/classrooms/${classroomId}/roles`);
+      setClassroomRoles(r.data || []);
+    } catch { setClassroomRoles([]); }
+  };
+
+  const saveRole = async () => {
+    if (!assignPhone.trim() || !bindingClassroomId) return;
+    setLoading(true); setError('');
+    try {
+      await api.post(`/classrooms/${bindingClassroomId}/roles`, { phone: assignPhone.trim(), role: assignRole });
+      const r = await api.get(`/classrooms/${bindingClassroomId}/roles`);
+      setClassroomRoles(r.data || []);
+      setAssignPhone('');
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error al asignar'); }
+    finally { setLoading(false); }
+  };
+
+  const removeRole = async (phone: string) => {
+    if (!bindingClassroomId) return;
+    try {
+      await api.delete(`/classrooms/${bindingClassroomId}/roles/${phone}`);
+      setClassroomRoles(prev => prev.filter(r => !r.user_jid.startsWith(phone)));
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+  };
+
+  const deleteReport = async () => {
+    if (!selectedReport || !confirm(t.confirm_delete)) return;
+    setLoading(true);
+    try {
+      const path = selectedReport.type === 'fundraiser'
+        ? `/fundraisers/${selectedReport.id}`
+        : `/forms/${selectedReport.id}`;
+      await api.delete(path);
+      setSelectedReport(null); setReportData(null);
+      await fetchAll();
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error al eliminar'); }
+    finally { setLoading(false); }
+  };
+
+  const rejectPayment = async (paymentId: number) => {
+    if (!confirm('¿Rechazar este pago?')) return;
+    try {
+      await api.patch(`/fundraisers/payments/${paymentId}`, { status: 'rejected' });
+      setSelectedPayerGroup((prev: any) => ({
+        ...prev,
+        payments: prev.payments.map((p: any) => p.id === paymentId ? { ...p, status: 'rejected' } : p),
+      }));
+      if (selectedReport) {
+        const r = await api.get(`/fundraisers/${selectedReport.id}/report`);
+        setReportData(r.data);
+      }
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+  };
+
+  const deleteSubmission = async () => {
+    if (!selectedSubmission || !selectedReport || !confirm(t.confirm_delete)) return;
+    try {
+      await api.delete(`/forms/${selectedReport.id}/submissions/${selectedSubmission.id}`);
+      setSelectedSubmission(null); setSubmissionDetail(null);
+      const r = await api.get(`/forms/${selectedReport.id}/report`);
+      setReportData(r.data);
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+  };
+
+  const fetchSubmissionDetail = async (formId: number, submissionId: number) => {
+    setSubmissionDetail(null);
+    try {
+      const r = await api.get(`/forms/${formId}/submissions/${submissionId}`);
+      setSubmissionDetail(r.data);
+    } catch (e) { console.error(e); }
+  };
+
+  const refreshSeducaGroups = async () => {
+    try {
+      const r = await api.get('/seduca/groups');
+      setSeducaGroups(r.data || []);
+    } catch {}
   };
 
   const sendChat = async () => {
@@ -497,59 +769,41 @@ export default function AdminApp() {
                   count={events.length} onClick={() => goTab('events')} />
               </div>
 
-              {/* Assistant */}
-              <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-100">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="bg-violet-600 p-2.5 rounded-2xl shadow-lg shadow-violet-200">
-                    <MessageSquare className="w-5 h-5 text-white" />
-                  </div>
-                  <h2 className="font-extrabold text-lg">{t.assistant}</h2>
-                </div>
-                {chatMessages.length > 0 && (
-                  <div className="space-y-3 mb-4 max-h-48 overflow-y-auto">
-                    {chatMessages.map((m, i) => (
-                      <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`text-xs px-4 py-2 rounded-2xl max-w-[80%] ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700'}`}>
-                          {m.text}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="relative">
-                  <input type="text" placeholder={t.assistant_placeholder} value={chatInput}
-                    onChange={e => setChatInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendChat()}
-                    className="w-full pl-5 pr-14 py-4 bg-slate-100 border-none rounded-2xl text-sm outline-none" />
-                  <button onClick={sendChat} className="absolute right-2 top-1/2 -translate-y-1/2 bg-violet-600 text-white p-2.5 rounded-xl">
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </section>
+              {/* Assistant — hidden for now */}
             </motion.div>
           )}
 
           {/* Fundraisers list */}
           {!selectedReport && activeTab === 'fundraisers' && (
-            <ListView key="fund-list" title={t.fundraisers} items={fundraisers} type="activity"
+            <ListView key="fund-list" title={t.fundraisers} items={[...fundraisers].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())} type="activity"
               noItemsLabel={t.no_items} loading={dataLoading} onSelect={(f: any) => selectReport(f, 'fundraiser')}
-              showArchived={showArchivedFunds}
-              onToggleArchived={() => {
-                const next = !showArchivedFunds;
-                setShowArchivedFunds(next);
-                fetchAll({ archivedFunds: next });
+              showArchived={showArchivedFunds} seeAllLabel={t.see_all} showActiveLabel={t.show_active}
+              onToggleArchived={() => { const next = !showArchivedFunds; setShowArchivedFunds(next); fetchAll({ archivedFunds: next }); }}
+              onClose={async (item: any) => {
+                try { await api.patch(`/fundraisers/${item.id}`, { status: 'closed' }); await fetchAll(); }
+                catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+              }}
+              onDelete={async (item: any) => {
+                if (!confirm(t.confirm_delete)) return;
+                try { await api.delete(`/fundraisers/${item.id}`); await fetchAll(); }
+                catch (e: any) { setError(e?.response?.data?.detail || 'Error al eliminar'); }
               }} />
           )}
 
           {/* Forms list */}
           {!selectedReport && activeTab === 'forms' && (
-            <ListView key="form-list" title={t.forms} items={forms} type="form"
+            <ListView key="form-list" title={t.forms} items={[...forms].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())} type="form"
               noItemsLabel={t.no_items} loading={dataLoading} onSelect={(f: any) => selectReport(f, 'form')}
-              showArchived={showArchivedForms}
-              onToggleArchived={() => {
-                const next = !showArchivedForms;
-                setShowArchivedForms(next);
-                fetchAll({ archivedForms: next });
+              showArchived={showArchivedForms} seeAllLabel={t.see_all} showActiveLabel={t.show_active}
+              onToggleArchived={() => { const next = !showArchivedForms; setShowArchivedForms(next); fetchAll({ archivedForms: next }); }}
+              onClose={async (item: any) => {
+                try { await api.patch(`/forms/${item.id}`, { status: 'closed' }); await fetchAll(); }
+                catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+              }}
+              onDelete={async (item: any) => {
+                if (!confirm(t.confirm_delete)) return;
+                try { await api.delete(`/forms/${item.id}`); await fetchAll(); }
+                catch (e: any) { setError(e?.response?.data?.detail || 'Error al eliminar'); }
               }} />
           )}
 
@@ -579,8 +833,16 @@ export default function AdminApp() {
 
           {/* Groups list */}
           {!selectedGroup && activeTab === 'groups' && (
-            <ListView key="group-list" title={t.groups} items={classrooms} type="group"
-              noItemsLabel={t.no_items} loading={dataLoading} onSelect={(g: any) => selectGroup(g)} />
+            <ListView key="group-list" title={t.groups}
+              items={[...classrooms].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''))}
+              type="group" noItemsLabel={t.no_items} loading={dataLoading} onSelect={(g: any) => selectGroup(g)}
+              onDelete={async (g: any) => {
+                if (!confirm(`¿Eliminar grupo "${g.display_name || g.name}"?`)) return;
+                try {
+                  await api.delete(`/classrooms/${g.id}`);
+                  setClassrooms(prev => prev.filter(c => c.id !== g.id));
+                } catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+              }} />
           )}
 
           {/* Group detail */}
@@ -591,8 +853,50 @@ export default function AdminApp() {
                 <ChevronLeft className="w-4 h-4" /> {t.back}
               </button>
               <div className="bg-blue-600 p-6 rounded-[3rem] text-white shadow-xl">
-                <h2 className="text-2xl font-black tracking-tight">{selectedGroup.name}</h2>
-                <p className="text-white/60 text-xs mt-1 font-bold uppercase tracking-widest">{t.members}</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tight">{selectedGroup.display_name || selectedGroup.name}</h2>
+                    <p className="text-white/60 text-xs mt-1 font-bold uppercase tracking-widest">
+                      {selectedGroup.kids_count ?? 0} niños · {selectedGroup.members_count ?? 0} contactos
+                    </p>
+                  </div>
+                  <button onClick={() => setShowGroupConfig((v: any) => !v)}
+                    className="bg-white/15 hover:bg-white/25 p-2.5 rounded-2xl transition-colors">
+                    <Settings className="w-4 h-4" />
+                  </button>
+                </div>
+                {showGroupConfig && (
+                  <div className="mt-4 flex items-center gap-2 flex-wrap">
+                    {selectedGroup.whatsapp_group_id
+                      ? <button onClick={() => unbindGroup(selectedGroup.id)}
+                          className="bg-white/10 hover:bg-white/20 text-white text-[9px] font-black px-3 py-1.5 rounded-full uppercase transition-colors">
+                          Desvincular WA
+                        </button>
+                      : <button onClick={() => openBindModal(selectedGroup.id)}
+                          className="bg-white/20 hover:bg-white/30 text-white text-[9px] font-black px-3 py-1.5 rounded-full uppercase transition-colors">
+                          + Vincular WA
+                        </button>}
+                    <button onClick={() => openAssignRole(selectedGroup.id)}
+                      className="bg-white/10 hover:bg-white/20 text-white text-[9px] font-black px-3 py-1.5 rounded-full uppercase transition-colors">
+                      Delegados
+                    </button>
+                    {groupSeducaLinks[selectedGroup.id]?.linked
+                      ? <>
+                          <button onClick={() => openSeducaLinkModal(selectedGroup.id)}
+                            className="bg-emerald-400/30 text-white text-[9px] font-black px-3 py-1.5 rounded-full uppercase">
+                            Seduca ✓
+                          </button>
+                          <button onClick={() => unlinkSeduca(selectedGroup.id)}
+                            className="bg-white/10 text-white text-[9px] font-black px-3 py-1.5 rounded-full uppercase">
+                            Desvincular Seduca
+                          </button>
+                        </>
+                      : <button onClick={() => openSeducaLinkModal(selectedGroup.id)}
+                          className="bg-white/10 hover:bg-white/20 text-white text-[9px] font-black px-3 py-1.5 rounded-full uppercase transition-colors">
+                          + Seduca
+                        </button>}
+                  </div>
+                )}
               </div>
               <div className="space-y-3">
                 {groupMembersLoading ? (
@@ -602,35 +906,46 @@ export default function AdminApp() {
                 ) : groupMembers.map((m: any, i: number) => (
                   <div key={i} className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-blue-50 rounded-2xl flex items-center justify-center flex-shrink-0">
-                        <User className="w-5 h-5 text-blue-500" />
-                      </div>
+                      <div className="w-10 h-10 bg-blue-50 rounded-2xl flex items-center justify-center flex-shrink-0 text-lg">👦</div>
                       <div className="min-w-0 flex-1">
-                        <div className="font-black text-slate-800 text-sm truncate">{m.name}</div>
-                        <div className="text-[10px] font-bold text-slate-400">{m.jid?.replace('@c.us', '').replace('@lid', '')}</div>
+                        <div className="font-black text-slate-800 text-sm">{m.child_name}</div>
                       </div>
                       <button onClick={() => openMemberEdit(m)} className="text-slate-300 hover:text-indigo-500 transition-colors flex-shrink-0 p-1">
                         <Edit2 className="w-4 h-4" />
                       </button>
                     </div>
-                    {m.students?.length > 0 && (
-                      <div className="mt-3 space-y-2 border-t border-slate-50 pt-3">
-                        {m.students.map((s: any, j: number) => (
-                          <div key={j} className="flex items-center justify-between ml-13">
-                            <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 bg-slate-100 rounded-full flex items-center justify-center text-xs">👶</div>
-                              <span className="text-xs font-bold text-slate-600">{s.name}</span>
-                            </div>
-                            {s.is_primary_payer && (
-                              <span className="text-[8px] font-black uppercase bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">{t.primary_payer}</span>
-                            )}
-                          </div>
+                    {m.parents?.length > 0 && (
+                      <div className="mt-3 space-y-2 border-t border-slate-50 pt-3 ml-3">
+                        {m.parents.map((p: any, j: number) => (
+                          <MemberParentRow key={j} parent={p} />
                         ))}
                       </div>
                     )}
                   </div>
                 ))}
               </div>
+              {/* Unidentified contacts — collapsible */}
+              {groupUnidentified.length > 0 && (
+                <div>
+                  <button onClick={() => setShowUnidentified(v => !v)}
+                    className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1">
+                    <ChevronRight className={`w-3 h-3 transition-transform ${showUnidentified ? 'rotate-90' : ''}`} />
+                    {groupUnidentified.length} contactos sin identificar
+                  </button>
+                  {showUnidentified && (
+                    <div className="mt-3 space-y-2">
+                      {groupUnidentified.map((u: any, i: number) => (
+                        <div key={i} className="bg-slate-50 px-4 py-3 rounded-2xl flex items-center justify-between">
+                          <div>
+                            <div className="text-xs font-bold text-slate-500">{u.name}</div>
+                            {u.phone && <div className="text-[10px] font-mono text-slate-400">+{u.phone}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -638,6 +953,31 @@ export default function AdminApp() {
           {activeTab === 'settings' && (
             <motion.div key="settings" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
               <h2 className="text-2xl font-black tracking-tight">{t.settings}</h2>
+
+              {allRoles.length > 0 && (
+                <section className="space-y-4">
+                  <h3 className="section-label flex items-center gap-2"><Users className="w-3 h-3" /> {t.delegates}</h3>
+                  <div className="space-y-2">
+                    {allRoles.map((r: any, i: number) => (
+                      <div key={i} className="bg-white p-4 rounded-3xl border border-slate-100 flex items-center justify-between">
+                        <div>
+                          <div className="font-black text-xs text-slate-800">{r.name || r.phone}</div>
+                          {r.name && <div className="text-[10px] font-bold text-slate-400">{r.phone}</div>}
+                          <div className="text-[10px] font-bold text-slate-400">{r.classroom_name} · <span className="uppercase">{r.role}</span></div>
+                        </div>
+                        <button onClick={async () => {
+                          try {
+                            await api.delete(`/classrooms/${r.classroom_id}/roles/${r.phone}`);
+                            setAllRoles(prev => prev.filter((_r, j) => j !== i));
+                          } catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+                        }} className="text-slate-300 hover:text-red-400 transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
 
               <section className="space-y-4">
                 <h3 className="section-label flex items-center gap-2"><CreditCard className="w-3 h-3" /> {t.accounts}</h3>
@@ -665,13 +1005,40 @@ export default function AdminApp() {
               </section>
 
               <section className="space-y-4">
-                <h3 className="section-label flex items-center gap-2"><Globe className="w-3 h-3" /> {t.edulink_setup}</h3>
+                <h3 className="section-label flex items-center gap-2"><Globe className="w-3 h-3" /> Seduca</h3>
                 <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 space-y-4 shadow-sm">
-                  <FlatInput label={t.portal_user} icon={<User className="w-4 h-4" />} />
-                  <FlatInput label={t.portal_pass} icon={<Key className="w-4 h-4" />} type="password" />
-                  <button className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-lg shadow-indigo-100">
-                    {t.save}
+                  {seducaHasCreds && (
+                    <div className="bg-emerald-50 px-4 py-2 rounded-2xl text-emerald-700 text-xs font-bold flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2"><Check className="w-3 h-3" /> {seducaCurrentUser}</span>
+                      <button onClick={refreshSeducaGroups}
+                        className="text-emerald-600 font-black text-[10px] uppercase underline underline-offset-2">
+                        Ver grupos
+                      </button>
+                    </div>
+                  )}
+                  <FlatInput label="Usuario Seduca" icon={<User className="w-4 h-4" />}
+                    value={seducaUser} onChange={setSeducaUser} />
+                  <FlatInput label="Contraseña" icon={<Key className="w-4 h-4" />} type="password"
+                    value={seducaPass} onChange={setSeducaPass} />
+                  <button
+                    onClick={saveSeducaCreds}
+                    disabled={seducaSaving || !seducaUser || !seducaPass}
+                    className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-lg shadow-indigo-100 disabled:opacity-50">
+                    {seducaSaving ? 'Verificando...' : 'Guardar y descubrir grupos'}
                   </button>
+                  {seducaGroups.length > 0 && (
+                    <div className="pt-2 space-y-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Grupos Seduca descubiertos</p>
+                      {seducaGroups.map((g: any) => (
+                        <div key={g.id} className="bg-slate-50 px-4 py-2 rounded-2xl flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-700">{g.name}</span>
+                          {g.bound_classroom_id
+                            ? <span className="text-[9px] font-black uppercase bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">Vinculado</span>
+                            : <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">Sin vincular</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </section>
             </motion.div>
@@ -684,23 +1051,35 @@ export default function AdminApp() {
                 className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-tighter">
                 <ChevronLeft className="w-4 h-4" /> {t.back}
               </button>
-              <div className={`${selectedReport.type === 'fundraiser' ? 'bg-emerald-600' : 'bg-indigo-600'} p-8 rounded-[3rem] text-white shadow-xl`}>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h2 className="text-3xl font-black tracking-tighter leading-none">{selectedReport.name || selectedReport.title}</h2>
-                    <p className="mt-2 text-white/70 font-bold uppercase text-[10px] tracking-widest">{selectedReport.status}</p>
-                  </div>
-                  <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase backdrop-blur-md">{selectedReport.type}</span>
+              <div className={`${selectedReport.type === 'fundraiser' ? 'bg-emerald-600' : 'bg-indigo-600'} p-6 rounded-[3rem] text-white shadow-xl`}>
+                <div className="flex items-center gap-3 mb-1">
+                  <h2 className="text-lg font-black tracking-tight leading-snug break-words min-w-0 flex-1">{selectedReport.name || selectedReport.title}</h2>
+                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full flex-shrink-0 ${
+                    (reportData?.status || selectedReport.status) === 'active' ? 'bg-white/20' : 'bg-white/10 text-white/60'
+                  }`}>{reportData?.status || selectedReport.status}</span>
                 </div>
-                <div className="mt-8 flex gap-3">
+                {selectedReport.type === 'fundraiser' && reportData && (
+                  <div className="flex items-baseline gap-3 mt-2 mb-4">
+                    <span className="text-3xl font-black">${reportData.payments?.reduce((s: number, p: any) => s + (p.status === 'confirmed' ? parseFloat(p.amount || 0) : 0), 0).toFixed(2)}</span>
+                    <span className="text-white/50 text-xs font-bold">{reportData.payments?.filter((p: any) => p.status === 'confirmed').length || 0} pagos</span>
+                  </div>
+                )}
+                <div className="flex gap-2">
                   <button onClick={sendReminder} disabled={loading}
-                    className="flex-1 bg-white text-slate-900 py-3 rounded-2xl text-xs font-black uppercase flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-transform">
+                    className="bg-white text-slate-900 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1.5 shadow-lg active:scale-95 transition-transform">
                     <Bell className="w-3 h-3" /> {t.remind}
                   </button>
                   <button onClick={toggleReportStatus} disabled={loading}
-                    className="bg-white/20 px-4 py-3 rounded-2xl text-white backdrop-blur-md text-xs font-black uppercase">
+                    className="bg-white/15 px-4 py-2.5 rounded-2xl text-white text-[10px] font-black uppercase">
                     {(reportData?.status || selectedReport.status) === 'active' ? t.close : t.reopen}
                   </button>
+                  {reportData != null &&
+                   (reportData.payments?.length === 0 || reportData.submissions?.length === 0) && (
+                    <button onClick={deleteReport} disabled={loading}
+                      className="bg-red-500/20 hover:bg-red-500/40 px-3 py-2.5 rounded-2xl text-white text-[10px] font-black uppercase transition-colors">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -712,22 +1091,85 @@ export default function AdminApp() {
                 <div className="space-y-4">
                   {reportData == null ? (
                     <div className="text-center text-slate-400 py-4">{t.loading}</div>
-                  ) : (reportData?.payments || reportData?.submissions || []).length === 0 ? (
-                    <div className="text-center text-slate-400">{t.no_items}</div>
-                  ) : (reportData?.payments || reportData?.submissions).map((s: any, i: number) => (
-                    <div key={i} className="flex justify-between items-center p-4 bg-slate-50/50 rounded-2xl border border-slate-50">
-                      <div className="min-w-0">
-                        <div className="font-black text-slate-800 text-xs truncate">{s.parent}</div>
-                        <div className="text-[10px] text-slate-400 font-bold">{s.child || s.student}</div>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        {s.amount && <div className="text-xs font-black text-slate-700">${s.amount}</div>}
-                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${s.status === 'confirmed' || s.status === 'submitted' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                          {s.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                  ) : selectedReport.type === 'fundraiser' ? (
+                    (() => {
+                      const payments: any[] = reportData?.payments || [];
+                      const grouped = payments.reduce((acc: any, p: any) => {
+                        const key = p.payer_jid || p.parent || 'unknown';
+                        if (!acc[key]) acc[key] = { name: p.parent, child: p.child, payments: [] };
+                        acc[key].payments.push(p);
+                        return acc;
+                      }, {} as Record<string, any>);
+                      const groups = Object.values(grouped) as any[];
+                      if (groups.length === 0) return <div className="text-center text-slate-400">{t.no_items}</div>;
+                      const unpaid: any[] = reportData?.unpaid || [];
+                      return <>
+                        {groups.map((g: any, i: number) => {
+                          const total = g.payments.reduce((sum: number, p: any) => sum + parseFloat(p.amount || 0), 0);
+                          const allConfirmed = g.payments.every((p: any) => p.status === 'confirmed');
+                          const anyConfirmed = g.payments.some((p: any) => p.status === 'confirmed');
+                          return (
+                            <div key={i} onClick={() => { setSelectedPayerGroup(g); setShowPaymentModal(true); }}
+                              className="flex justify-between items-center p-4 bg-slate-50/50 hover:bg-slate-100 rounded-2xl border border-slate-50 cursor-pointer active:scale-[0.98] transition-transform">
+                              <div className="min-w-0">
+                                <div className="font-black text-slate-800 text-xs truncate">{g.name}</div>
+                                <div className="text-[10px] text-slate-400 font-bold">{g.child}</div>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <div className="text-right">
+                                  <div className="text-xs font-black text-emerald-600">${total.toFixed(2)}</div>
+                                  <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${allConfirmed ? 'bg-emerald-50 text-emerald-600' : anyConfirmed ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}>
+                                    {allConfirmed ? 'confirmed' : anyConfirmed ? 'partial' : g.payments[0]?.status}
+                                  </span>
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-slate-300" />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {unpaid.length > 0 && (
+                          <div className="mt-6">
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-red-400 mb-3">
+                              Sin pagar ({unpaid.length})
+                            </h3>
+                            <div className="space-y-2">
+                              {unpaid.map((u: any, i: number) => (
+                                <div key={i} className="flex justify-between items-center p-3 bg-red-50/50 rounded-2xl border border-red-50">
+                                  <div className="min-w-0">
+                                    <div className="font-black text-slate-700 text-xs truncate">{u.child_name}</div>
+                                    <div className="text-[10px] text-slate-400 font-bold">{u.parent_name} · {u.classroom}</div>
+                                  </div>
+                                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-red-100 text-red-500 flex-shrink-0">
+                                    pendiente
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>;
+                    })()
+                  ) : (
+                    (() => {
+                      const submissions: any[] = reportData?.submissions || [];
+                      if (submissions.length === 0) return <div className="text-center text-slate-400">{t.no_items}</div>;
+                      return <>{submissions.map((s: any, i: number) => (
+                        <div key={i} onClick={() => { setSelectedSubmission(s); fetchSubmissionDetail(selectedReport.id, s.id); }}
+                          className="flex justify-between items-center p-4 bg-slate-50/50 hover:bg-slate-100 rounded-2xl border border-slate-50 cursor-pointer active:scale-[0.98] transition-transform">
+                          <div className="min-w-0">
+                            <div className="font-black text-slate-800 text-xs truncate">{s.parent}</div>
+                            <div className="text-[10px] text-slate-400 font-bold">{s.student}</div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${s.status === 'submitted' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                              {s.status}
+                            </span>
+                            <ChevronRight className="w-4 h-4 text-slate-300" />
+                          </div>
+                        </div>
+                      ))}</>;
+                    })()
+                  )}
                 </div>
               </div>
             </motion.div>
@@ -768,6 +1210,8 @@ export default function AdminApp() {
                 onClick={() => { setShowCreateMenu(false); setShowNewForm(true); }} />
               <CreateOpt icon={<CalendarPlus />} label={t.event} color="text-amber-600 bg-amber-50"
                 onClick={() => { setShowCreateMenu(false); setShowNewEvent(true); }} />
+              <CreateOpt icon={<Users />} label={t.new_classroom} color="text-blue-600 bg-blue-50"
+                onClick={() => { setShowCreateMenu(false); setShowNewClassroom(true); }} />
             </div>
           </Backdrop>
         )}
@@ -780,8 +1224,6 @@ export default function AdminApp() {
             <div className="space-y-5">
               <FlatInput label={t.fund_name} icon={<Tag className="w-4 h-4" />}
                 value={fName} onChange={setFName} />
-              <FlatInput label="Nombre amigable (para el bot)" icon={<MessageSquare className="w-4 h-4" />}
-                value={fFriendlyName} onChange={setFFriendlyName} />
 
               {/* Account */}
               <div className="space-y-2">
@@ -990,14 +1432,269 @@ export default function AdminApp() {
         {editingMember && (
           <Modal title={t.edit} onClose={() => setEditingMember(null)}>
             <div className="space-y-5">
-              <FlatInput label={t.parent_name + ' (nombre)'} icon={<User className="w-4 h-4" />}
-                value={editFirstName} onChange={setEditFirstName} />
-              <FlatInput label={t.parent_name + ' (apellido)'} icon={<User className="w-4 h-4" />}
-                value={editLastName} onChange={setEditLastName} />
+              <FlatInput label={t.student_name} icon={<User className="w-4 h-4" />}
+                value={editChildName} onChange={setEditChildName} />
+              {editParents.map((p: any, i: number) => (
+                <div key={i} className="space-y-2 bg-slate-50 p-4 rounded-2xl">
+                  <FlatInput label={`${t.parent_name} ${editParents.length > 1 ? i + 1 : ''}`}
+                    value={p.editName}
+                    onChange={(v: string) => setEditParents(prev => prev.map((x, j) => j === i ? { ...x, editName: v } : x))} />
+                  <button
+                    onClick={() => setEditParents(prev => prev.map((x, j) => j === i ? { ...x, is_primary_payer: !x.is_primary_payer } : x))}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black transition-all ${p.is_primary_payer ? 'bg-emerald-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
+                    <CreditCard className="w-3.5 h-3.5" />
+                    {t.primary_payer}
+                  </button>
+                </div>
+              ))}
               <button onClick={saveMember} disabled={loading}
                 className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
                 {loading ? '...' : t.save}
               </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* Delegate role assignment modal */}
+      <AnimatePresence>
+        {showAssignRole && (
+          <Modal title={t.delegates} onClose={() => setShowAssignRole(false)}>
+            <div className="space-y-5">
+              {classroomRoles.length > 0 && (
+                <div className="space-y-2">
+                  {classroomRoles.map((r: any) => (
+                    <div key={r.user_jid} className="flex items-center justify-between bg-slate-50 px-4 py-2 rounded-2xl">
+                      <div>
+                        <div className="text-xs font-black text-slate-700">{r.name || r.phone || r.user_jid.replace('@c.us','')}</div>
+                        {r.name && <div className="text-[10px] font-bold text-slate-400">{r.phone || r.user_jid.replace('@c.us','')}</div>}
+                        <div className="text-[10px] font-bold text-slate-400 uppercase">{r.role}</div>
+                      </div>
+                      <button onClick={() => removeRole(r.phone || r.user_jid.replace('@c.us',''))}
+                        className="text-slate-300 hover:text-red-400 transition-colors">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="border-t border-slate-100 pt-4 space-y-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t.add_delegate}</p>
+                <FlatInput label="Teléfono (ej: 50766112233)" icon={<User className="w-4 h-4" />}
+                  value={assignPhone} onChange={setAssignPhone} />
+                <div className="space-y-2">
+                  <label className="label-sm">Rol</label>
+                  <select value={assignRole} onChange={e => setAssignRole(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+                    <option value="delegado">Delegado</option>
+                    <option value="soporte">Soporte</option>
+                  </select>
+                </div>
+                <button onClick={saveRole} disabled={loading || !assignPhone.trim()}
+                  className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase disabled:opacity-50">
+                  {loading ? '...' : 'Asignar'}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* New Classroom modal */}
+      <AnimatePresence>
+        {showNewClassroom && (
+          <Modal title={t.new_classroom} onClose={() => setShowNewClassroom(false)}>
+            <div className="space-y-5">
+              <FlatInput label="Nombre del salón" icon={<Users className="w-4 h-4" />}
+                value={newClsName} onChange={setNewClsName} />
+              <button onClick={createClassroom} disabled={loading || !newClsName.trim()}
+                className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
+                {loading ? '...' : t.new_classroom}
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* WhatsApp group binding modal */}
+      <AnimatePresence>
+        {showBindModal && (
+          <Modal title="Vincular grupo de WhatsApp" onClose={() => setShowBindModal(false)}>
+            <div className="space-y-4">
+              <p className="text-xs text-slate-500 font-medium">
+                Pega el enlace de invitación del grupo de WhatsApp.<br />
+                El bot se unirá automáticamente al grupo.
+              </p>
+              <FlatInput
+                label="Enlace de invitación (chat.whatsapp.com/...)"
+                icon={<Link2 className="w-4 h-4" />}
+                value={bindInviteLink}
+                onChange={setBindInviteLink}
+              />
+              <p className="text-[10px] text-slate-400 font-medium">
+                Ejemplo: https://chat.whatsapp.com/ABC123XYZ
+              </p>
+              <button
+                onClick={bindGroupViaLink}
+                disabled={wahaGroupsLoading || !bindInviteLink.trim()}
+                className="w-full py-5 bg-green-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
+                {wahaGroupsLoading ? '...' : 'Vincular grupo'}
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* Payment slip modal */}
+      <AnimatePresence>
+        {showPaymentModal && selectedPayerGroup && (
+          <Modal title={t.payment_slip} onClose={() => { setShowPaymentModal(false); setSelectedPayerGroup(null); }}>
+            <div className="space-y-4">
+              <div>
+                <div className="font-black text-slate-800">{selectedPayerGroup.name}</div>
+                <div className="text-xs text-slate-400 font-bold">{selectedPayerGroup.child}</div>
+              </div>
+              {selectedPayerGroup.payments.map((p: any, i: number) => (
+                <div key={i} className="bg-slate-50 rounded-2xl p-4 space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-black text-slate-800 text-sm">${p.amount}</div>
+                      <div className="text-[10px] font-bold text-slate-400">
+                        {p.date ? new Date(p.date).toLocaleDateString() : ''}
+                        {p.confirmation_code && <span className="ml-2">· #{p.confirmation_code}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${p.status === 'confirmed' ? 'bg-emerald-50 text-emerald-600' : p.status === 'rejected' ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-600'}`}>
+                        {p.status}
+                      </span>
+                      {p.status !== 'rejected' && (
+                        <button onClick={() => rejectPayment(p.id)}
+                          className="text-slate-300 hover:text-red-400 transition-colors" title="Rechazar">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {p.receipt_media_url && (
+                    <img src={p.receipt_media_url} alt="Comprobante"
+                      className="w-full rounded-2xl border border-slate-100 object-contain max-h-64" />
+                  )}
+                  {p.order_items?.length > 0 && (
+                    <div className="border-t border-slate-100 pt-2">
+                      <div className="text-[10px] font-black uppercase text-slate-400 mb-1">{t.order_items}</div>
+                      <div className="space-y-1">
+                        {p.order_items.map((oi: any, j: number) => (
+                          <div key={j} className="flex justify-between text-xs font-bold text-slate-700">
+                            <span>{oi.product} × {oi.quantity}</span>
+                            <span>${oi.subtotal}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* Form submission detail modal */}
+      <AnimatePresence>
+        {selectedSubmission && (
+          <Modal title={t.answers} onClose={() => { setSelectedSubmission(null); setSubmissionDetail(null); }}>
+            <div className="space-y-4">
+              <div>
+                <div className="font-black text-slate-800">{selectedSubmission.parent}</div>
+                <div className="text-xs text-slate-400 font-bold">{selectedSubmission.student} · {selectedSubmission.date ? new Date(selectedSubmission.date).toLocaleDateString() : ''}</div>
+              </div>
+              {submissionDetail == null ? (
+                <div className="text-center text-slate-400 py-6">{t.loading}</div>
+              ) : submissionDetail.answers?.length === 0 ? (
+                <div className="text-center text-slate-400 py-4">{t.no_items}</div>
+              ) : submissionDetail.answers?.map((a: any, i: number) => (
+                <div key={i} className="bg-slate-50 rounded-2xl p-4">
+                  <div className="font-black text-slate-700 text-xs mb-1">{a.question}</div>
+                  <div className="text-sm text-slate-800">
+                    {a.value_json != null
+                      ? (Array.isArray(a.value_json) ? a.value_json.join(', ') : String(a.value_json))
+                      : a.value || '—'}
+                  </div>
+                </div>
+              ))}
+              {submissionDetail != null && (
+                <button onClick={deleteSubmission}
+                  className="w-full py-4 bg-red-50 text-red-500 rounded-2xl font-black text-xs uppercase mt-2 hover:bg-red-100 transition-colors">
+                  <span className="flex items-center justify-center gap-2"><Trash2 className="w-3 h-3" /> {t.delete}</span>
+                </button>
+              )}
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* Seduca link modal */}
+      <AnimatePresence>
+        {showSeducaLinkModal && (
+          <Modal title="Vincular grupo Seduca" onClose={() => setShowSeducaLinkModal(false)}>
+            <div className="space-y-5">
+              {seducaGroups.length === 0 ? (
+                <div className="text-center text-slate-400 py-4 text-sm">
+                  Agrega credenciales Seduca en Configuración primero.
+                </div>
+              ) : (
+                <>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Selecciona grupo Seduca</p>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {seducaGroups.map((g: any) => (
+                      <button key={g.id}
+                        onClick={() => setSelectedSeducaGroupId(g.id)}
+                        disabled={!!g.bound_classroom_id && g.bound_classroom_id !== seducaLinkClassroomId}
+                        className={`w-full p-3 rounded-2xl text-left transition-colors text-xs font-bold ${
+                          selectedSeducaGroupId === g.id
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-50 hover:bg-indigo-50 text-slate-700 disabled:opacity-40'
+                        }`}>
+                        {g.classroom_name || g.name}
+                        {g.bound_classroom_id && g.bound_classroom_id !== seducaLinkClassroomId &&
+                          <span className="ml-2 text-[9px] opacity-60">({g.bound_classroom_name})</span>}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-3">
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      Día del resumen semanal
+                    </label>
+                    <div className="flex gap-1.5">
+                      {['Lu','Ma','Mi','Ju','Vi','Sa','Do'].map((d, i) => (
+                        <button key={i} onClick={() => setSeducaLinkDay(i)}
+                          className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${seducaLinkDay === i ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      Hora del resumen
+                    </label>
+                    <input type="time" value={seducaLinkTime} onChange={(e) => setSeducaLinkTime(e.target.value)}
+                      className="w-full border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold focus:outline-none focus:border-indigo-400" />
+                  </div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <div onClick={() => setSeducaLinkDms(!seducaLinkDms)}
+                      className={`w-10 h-6 rounded-full transition-colors ${seducaLinkDms ? 'bg-indigo-600' : 'bg-slate-200'} flex items-center`}>
+                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-1 ${seducaLinkDms ? 'translate-x-4' : ''}`} />
+                    </div>
+                    <span className="text-xs font-bold text-slate-600">Responder DMs de padres</span>
+                  </label>
+                  <button onClick={saveSeducaLink} disabled={!selectedSeducaGroupId}
+                    className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
+                    Guardar
+                  </button>
+                </>
+              )}
             </div>
           </Modal>
         )}
@@ -1038,7 +1735,69 @@ function CreateOpt({ icon, label, color, onClick }: any) {
   );
 }
 
-function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArchived, onToggleArchived }: any) {
+function MemberParentRow({ parent }: { parent: any }) {
+  const [showPhone, setShowPhone] = React.useState(false);
+  const isRealPhone = parent.phone && parent.phone.length <= 15 && /^\d{7,15}$/.test(parent.phone);
+  return (
+    <button onClick={() => setShowPhone(v => !v)}
+      className="flex items-center gap-2 w-full text-left hover:bg-slate-50 rounded-2xl px-2 py-1 transition-colors">
+      <div className="w-7 h-7 bg-slate-100 rounded-full flex items-center justify-center text-xs flex-shrink-0">👤</div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-bold text-slate-600">{parent.name}</span>
+          {parent.is_primary_payer && (
+            <span className="bg-emerald-100 text-emerald-600 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">principal</span>
+          )}
+        </div>
+        {showPhone && (
+          isRealPhone
+            ? <div className="text-[10px] font-mono text-indigo-500 mt-0.5">+{parent.phone}</div>
+            : <div className="text-[10px] text-slate-300 mt-0.5">Sin teléfono</div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function SwipeableCard({ children, onClose, onDelete }: { children: React.ReactNode; onClose?: () => void; onDelete?: () => void }) {
+  const x = useMotionValue(0);
+  const THRESHOLD = 80;
+
+  const handleDragEnd = (_: any, info: any) => {
+    if (info.offset.x < -THRESHOLD && onClose) {
+      onClose();
+    } else if (info.offset.x > THRESHOLD && onDelete) {
+      onDelete();
+    }
+    animate(x, 0, { type: 'spring', stiffness: 400, damping: 30 });
+  };
+
+  return (
+    <div className="relative overflow-hidden rounded-[2rem]">
+      {/* Background action strips */}
+      <div className="absolute inset-0 flex items-center justify-between px-6 rounded-[2rem]">
+        {onDelete && (
+          <div className="flex items-center gap-1 text-red-500">
+            <Trash2 className="w-4 h-4" />
+            <span className="text-[10px] font-black uppercase">Eliminar</span>
+          </div>
+        )}
+        {onClose && (
+          <div className="flex items-center gap-1 text-orange-500 ml-auto">
+            <span className="text-[10px] font-black uppercase">Cerrar</span>
+            <X className="w-4 h-4" />
+          </div>
+        )}
+      </div>
+      <motion.div drag="x" dragConstraints={{ left: 0, right: 0 }} dragElastic={0.25}
+        style={{ x }} onDragEnd={handleDragEnd} className="relative z-10">
+        {children}
+      </motion.div>
+    </div>
+  );
+}
+
+function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArchived, onToggleArchived, seeAllLabel, showActiveLabel, onClose, onDelete }: any) {
   const accentColors: any = { activity: 'bg-emerald-500', form: 'bg-indigo-500', group: 'bg-blue-500' };
   const barColors: any = { activity: 'bg-emerald-400', form: 'bg-indigo-400' };
 
@@ -1049,7 +1808,7 @@ function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArc
         {onToggleArchived && (
           <button onClick={onToggleArchived}
             className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full transition-all ${showArchived ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-400'}`}>
-            {showArchived ? 'Activos' : 'Ver todos'}
+            {showArchived ? (showActiveLabel || 'Active only') : (seeAllLabel || 'See all')}
           </button>
         )}
       </div>
@@ -1076,8 +1835,14 @@ function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArc
           const collected = item.total_collected ?? null;
           const isArchived = item.status === 'archived' || item.status === 'closed';
 
+          const canDelete = (item.paid_count === 0 && item.submitted_count === 0) || (item.paid_count == null && item.submitted_count == null);
+          const canClose = !isArchived && (onClose || onDelete);
+
           return (
-            <div key={i} onClick={() => onSelect?.(item)}
+            <SwipeableCard key={i}
+              onClose={(onClose && !isArchived) ? () => onClose(item) : undefined}
+              onDelete={(onDelete && canDelete) ? () => onDelete(item) : undefined}>
+            <div onClick={() => onSelect?.(item)}
               className={`bg-white p-5 rounded-[2rem] shadow-sm border active:scale-[0.98] transition-transform cursor-pointer ${isArchived ? 'border-slate-100 opacity-60' : 'border-slate-100'}`}>
               <div className="flex items-center gap-3 mb-3">
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white flex-shrink-0 text-[11px] font-black ${accentColors[type] || 'bg-slate-400'}`}>
@@ -1085,11 +1850,12 @@ function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArc
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h4 className="font-black text-slate-800 truncate text-sm">{item.name || item.title}</h4>
+                    <h4 className="font-black text-slate-800 text-sm leading-tight break-words line-clamp-2">{item.name || item.title}</h4>
                     {isArchived && <span className="text-[8px] font-black uppercase bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full flex-shrink-0">{item.status}</span>}
                   </div>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
                     {item.code ? `${item.code} · ` : ''}{item.purpose || item.type || ''}
+                    {item.kids_count != null && ` · ${item.kids_count} niños`}
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0">
@@ -1109,6 +1875,7 @@ function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArc
                 </div>
               )}
             </div>
+            </SwipeableCard>
           );
         })}
       </div>

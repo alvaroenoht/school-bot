@@ -79,6 +79,36 @@ def _is_pay_command(text: str) -> bool:
     return t.startswith(("pay ", "pagar "))
 
 
+def _is_bare_pay(text: str) -> bool:
+    return text.lstrip("/").lower().strip() in ("pay", "pagar")
+
+
+def _resolve_code(text: str, db) -> tuple[str, object] | None:
+    """Try to match text as a fundraiser code or form code.
+    Returns ("fundraiser", obj) or ("form", obj) or None.
+    """
+    code = text.strip()
+    if not code or len(code) > 20:
+        return None
+    # Fundraiser code (exact, case-insensitive)
+    fund = (
+        db.query(models.Fundraiser)
+        .filter(models.Fundraiser.code.ilike(code), models.Fundraiser.status == "active")
+        .first()
+    )
+    if fund:
+        return ("fundraiser", fund)
+    # Form code (exact, case-insensitive)
+    form = (
+        db.query(models.Form)
+        .filter(models.Form.form_code.ilike(code), models.Form.status == "open")
+        .first()
+    )
+    if form:
+        return ("form", form)
+    return None
+
+
 @router.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
     body = await request.json()
@@ -320,8 +350,19 @@ async def whatsapp_webhook(request: Request):
                 await form_admin.handle_command(raw_jid, chat_id, raw_text, db, caller_parent=parent)
                 return {"status": "ok"}
 
-            if raw_text and raw_text.strip().upper().startswith("FORM-"):
-                await form_flow.start_from_code(raw_jid, chat_id, raw_text.strip(), db)
+            # Bare "pagar" → show pending list
+            if _is_bare_pay(raw_text):
+                await payment_flow.show_pending(raw_jid, chat_id, db, parent)
+                return {"status": "ok"}
+
+            # Code-first: try fundraiser or form code
+            resolved = _resolve_code(raw_text, db)
+            if resolved:
+                kind, obj = resolved
+                if kind == "fundraiser":
+                    await payment_flow.start_from_command(raw_jid, chat_id, f"pagar {obj.code}", db, parent)
+                else:
+                    await form_flow.start_from_code(raw_jid, chat_id, obj.form_code, db)
                 return {"status": "ok"}
 
             if _is_pay_command(raw_text):
@@ -335,11 +376,19 @@ async def whatsapp_webhook(request: Request):
                 )
             return {"status": "ok"}
 
-        # 6. Known contact \u2014 FORM code, "pay/pagar", or brief help
+        # 6. Known contact \u2014 code, "pay/pagar", or brief help
         contact = db.query(models.KnownContact).filter_by(jid=raw_jid).first()
         if contact:
-            if raw_text and raw_text.strip().upper().startswith("FORM-"):
-                await form_flow.start_from_code(raw_jid, chat_id, raw_text.strip(), db)
+            if _is_bare_pay(raw_text):
+                await payment_flow.show_pending(raw_jid, chat_id, db, contact)
+                return {"status": "ok"}
+            resolved = _resolve_code(raw_text, db)
+            if resolved:
+                kind, obj = resolved
+                if kind == "fundraiser":
+                    await payment_flow.start_from_command(raw_jid, chat_id, f"pagar {obj.code}", db, contact)
+                else:
+                    await form_flow.start_from_code(raw_jid, chat_id, obj.form_code, db)
                 return {"status": "ok"}
             if _is_pay_command(raw_text):
                 await payment_flow.start_from_command(raw_jid, chat_id, raw_text, db, contact)
@@ -361,41 +410,44 @@ async def whatsapp_webhook(request: Request):
                 )
                 return {"status": "ok"}
 
-            # FORM-XXXXX from unregistered user — check group membership first
-            if code.startswith("FORM-"):
-                form = db.query(models.Form).filter_by(form_code=code, status="open").first()
-                if form:
-                    # Check if sender is in a group that belongs to the form's audience
+            # Code from unregistered user — check group membership, then identify
+            resolved = _resolve_code(raw_text, db)
+            if resolved:
+                kind, obj = resolved
+                # Determine audience classrooms
+                if kind == "form":
                     audience_cls_ids = [
                         a.classroom_id for a in
-                        db.query(models.FormAudience).filter_by(form_id=form.id).all()
+                        db.query(models.FormAudience).filter_by(form_id=obj.id).all()
                     ]
-                    sender_phone = wa.resolve_phone(raw_jid)
-                    sender_c_us = f"{sender_phone}@c.us"
-                    form_group_id = None
-                    for cid in audience_cls_ids:
-                        cls = db.query(models.Classroom).get(cid)
-                        if cls and cls.whatsapp_group_id:
-                            try:
-                                parts = wa.get_group_participants(cls.whatsapp_group_id)
-                                if raw_jid in parts or sender_c_us in parts:
-                                    form_group_id = cls.whatsapp_group_id
-                                    break
-                            except Exception:
-                                pass
-                    if form_group_id:
-                        # In audience group — identify them first, then resume form
-                        await known_contact.handle(
-                            raw_jid, chat_id, raw_text, db, None,
-                            source_group_id=form_group_id, pending_command=code,
-                        )
-                    else:
-                        wa.send_text(
-                            chat_id,
-                            f"Para responder el formulario *{form.title}* necesitas estar registrado.\n"
-                            "Solicita un código de invitación al administrador.",
-                        )
-                    return {"status": "ok"}
+                else:
+                    audience_cls_ids = obj.audience_classroom_ids or []
+                sender_phone = wa.resolve_phone(raw_jid)
+                sender_c_us = f"{sender_phone}@c.us"
+                found_group_id = None
+                for cid in audience_cls_ids:
+                    cls = db.query(models.Classroom).get(cid)
+                    if cls and cls.whatsapp_group_id:
+                        try:
+                            parts = wa.get_group_participants(cls.whatsapp_group_id)
+                            if raw_jid in parts or sender_c_us in parts:
+                                found_group_id = cls.whatsapp_group_id
+                                break
+                        except Exception:
+                            pass
+                if found_group_id:
+                    await known_contact.handle(
+                        raw_jid, chat_id, raw_text, db, None,
+                        source_group_id=found_group_id, pending_command=code,
+                    )
+                else:
+                    label = obj.title if kind == "form" else obj.name
+                    wa.send_text(
+                        chat_id,
+                        f"Para acceder a *{label}* necesitas estar en un grupo escolar vinculado.\n"
+                        "Solicita un código de invitación al administrador.",
+                    )
+                return {"status": "ok"}
 
         # 8. Unknown sender \u2014 check group membership
         group_id = _check_group_membership(raw_jid, db, wa)
@@ -596,14 +648,10 @@ async def _handle_parent_payments(parent: models.Parent, chat_id: str, db) -> No
 
 _PARENT_HELP = (
     "📋 *Comandos disponibles:*\n\n"
-    "  `/resumen` — recibir resumen semanal + PDF\n"
-    "  `/pagar <actividad>` — pagar una actividad escolar\n"
+    "  `CÓDIGO` — escribe el código de una actividad o formulario para iniciar\n"
+    "  `pagar` — ver actividades y formularios pendientes\n"
     "  `/mis pagos` — ver historial de tus pagos\n"
-    "  `/fundraiser list` — ver actividades activas\n"
-    "  `/fundraiser create <nombre>` — crear nueva actividad\n"
-    "  `/form list` — ver tus formularios\n"
-    "  `/form create` — crear nuevo formulario\n"
-    "  `FORM-XXXXX` — responder un formulario del colegio\n"
+    "  `/resumen` — recibir resumen semanal + PDF\n"
     "  `/help` — mostrar este mensaje\n\n"
     "💬 O simplemente escríbeme tu pregunta sobre tareas y actividades."
 )

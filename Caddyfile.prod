@@ -1,0 +1,24 @@
+# ── Production (inbilt.co) ──────────────────────────────────────────────────
+# Caddy auto-provisions HTTPS via Let's Encrypt.
+# Requires ports 80 + 443 open and DNS A records pointing to this server.
+
+app.inbilt.co {
+    # Admin panel API calls
+    handle /api/admin* {
+        reverse_proxy schoolbot:8000
+    }
+
+    # Everything else → Next.js
+    handle {
+        reverse_proxy admin-panel:3000
+    }
+}
+
+api.inbilt.co {
+    # WhatsApp webhooks, health, all backend routes
+    reverse_proxy schoolbot:8000
+}
+
+inbilt.co {
+    redir https://app.inbilt.co{uri} permanent
+}

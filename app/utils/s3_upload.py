@@ -21,6 +21,27 @@ def _get_s3_client():
     )
 
 
+def upload_bytes_to_s3(
+    data: bytes,
+    s3_key: str,
+    content_type: str = "image/jpeg",
+    bucket: str | None = None,
+) -> str:
+    """Upload raw bytes to S3 and return a presigned URL (7-day expiry)."""
+    import io
+    if bucket is None:
+        bucket = get_settings().s3_bucket
+    client = _get_s3_client()
+    client.upload_fileobj(
+        io.BytesIO(data),
+        bucket,
+        s3_key,
+        ExtraArgs={"ContentType": content_type},
+    )
+    logger.info(f"Uploaded {len(data)} bytes → s3://{bucket}/{s3_key}")
+    return generate_presigned_url(s3_key, bucket=bucket)
+
+
 def upload_file_to_s3(file_path: str, s3_key: str, bucket: str | None = None) -> None:
     """Upload a local file to S3."""
     if bucket is None:

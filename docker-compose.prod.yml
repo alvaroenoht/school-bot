@@ -1,32 +1,36 @@
 version: "3.9"
 
-# ── Production overrides (AWS EC2) ────────────────────────────────────────────
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# ── Production overrides (AWS EC2 + nginx) ────────────────────────────────────
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# nginx handles HTTPS termination + reverse proxy externally.
 
 services:
 
   schoolbot:
-    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG:-latest}
-    build: ~   # don't build locally in prod, pull from ECR
+    ports:
+      - "127.0.0.1:8080:8000"   # only localhost — nginx proxies to here
     environment:
-      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}
-    logging:
-      driver: "awslogs"
-      options:
-        awslogs-group: "/schoolbot/app"
-        awslogs-region: "${AWS_REGION:-us-east-1}"
-        awslogs-stream-prefix: "schoolbot"
+      - WAHA_URL=http://waha:3000
+
+  admin-panel:
+    ports:
+      - "127.0.0.1:3001:3000"   # only localhost — nginx proxies to here
+
+  waha:
+    ports:
+      - "127.0.0.1:3002:3000"   # only localhost — for QR scan via SSH tunnel
+    environment:
+      - WHATSAPP_HOOK_URL=http://schoolbot:8000/webhook/whatsapp
 
   postgres:
-    # In production, use RDS instead — remove this service and set DB_HOST to RDS endpoint
+    ports: []                    # no external access
     environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-
-  pgadmin:
-    # Never run pgadmin in production
-    profiles:
-      - never
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-schoolbot}
 
   caddy:
-    environment:
-      - DOMAIN=${DOMAIN}
+    profiles:
+      - never                    # disabled — using nginx instead
+
+  pgadmin:
+    profiles:
+      - never

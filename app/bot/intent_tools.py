@@ -259,10 +259,10 @@ async def list_active_fundraisers(args, *, db, **kw) -> str:
     lines = ["Actividades activas:"]
     for f in fundraisers:
         if f.type == "fixed":
-            lines.append(f"- {f.name}: ${f.fixed_amount} (monto fijo). Comando: /pagar {f.name}")
+            lines.append(f"- {f.name}: ${f.fixed_amount} (monto fijo). Código: {f.code}")
         else:
             products = db.query(models.FundraiserProduct).filter_by(fundraiser_id=f.id).all()
-            lines.append(f"- {f.name}: catálogo con {len(products)} productos. Comando: /pagar {f.name}")
+            lines.append(f"- {f.name}: catálogo con {len(products)} productos. Código: {f.code}")
 
     logger.info(f"INTENT_TOOLS list_active_fundraisers count={len(fundraisers)}")
     return "\n".join(lines)

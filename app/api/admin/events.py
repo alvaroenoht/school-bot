@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db import models
-from app.api.admin.auth import get_current_admin
+from app.api.admin.auth import get_current_admin, require_write_access
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -22,10 +22,10 @@ async def create_event(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin)
 ):
+    require_write_access(admin)
     if not admin["is_super_admin"]:
-        # Delegates can only create events for their classrooms
-        my_classrooms = [r["classroom_id"] for r in admin["roles"]]
-        if any(cid not in my_classrooms for cid in req.audience_classroom_ids):
+        my_write_classrooms = [r["classroom_id"] for r in admin["roles"] if r["role"] != "soporte"]
+        if any(cid not in my_write_classrooms for cid in req.audience_classroom_ids):
             raise HTTPException(status_code=403, detail="Cannot create event for classrooms you don't manage.")
 
     db_event = models.Event(
@@ -74,6 +74,7 @@ async def update_event(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin)
 ):
+    require_write_access(admin)
     event = db.query(models.Event).filter_by(id=event_id).first()
     if not event: raise HTTPException(status_code=404)
 
@@ -96,6 +97,7 @@ async def delete_event(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin)
 ):
+    require_write_access(admin)
     event = db.query(models.Event).filter_by(id=event_id).first()
     if not event: raise HTTPException(status_code=404)
 

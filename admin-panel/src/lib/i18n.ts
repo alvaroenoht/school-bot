@@ -1,7 +1,7 @@
 export const translations = {
   en: {
     // Auth
-    welcome: "SchoolBot Admin",
+    welcome: "EduLink Admin",
     phone_placeholder: "Phone number",
     code_placeholder: "6-digit code",
     get_code: "Request Code",
@@ -121,7 +121,7 @@ export const translations = {
   },
   es: {
     // Auth
-    welcome: "Admin SchoolBot",
+    welcome: "EduLink Admin",
     phone_placeholder: "Celular",
     code_placeholder: "Código de 6 dígitos",
     get_code: "Solicitar Código",

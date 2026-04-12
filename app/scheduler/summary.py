@@ -43,15 +43,13 @@ async def send_weekly_summaries():
                 continue
 
             # Find students linked to this classroom
-            student = db.query(models.Student).filter_by(classroom_id=classroom.id).first()
-            if not student or not student.parent_id:
+            students = db.query(models.Student).filter_by(classroom_id=classroom.id).all()
+            if not students:
+                logger.warning(f"Classroom {classroom.id} has no students — skipping.")
                 continue
 
-            parent = db.query(models.Parent).get(student.parent_id)
-            if not parent:
-                continue
-
-            for student_id in [student.id]:
+            for student in students:
+                student_id = student.id
                 raw_conn = db.connection().connection.dbapi_connection
 
                 # Text summary
@@ -113,15 +111,12 @@ async def send_daily_reminders():
                 continue
 
             # Find students linked to this classroom
-            student = db.query(models.Student).filter_by(classroom_id=classroom.id).first()
-            if not student or not student.parent_id:
+            students = db.query(models.Student).filter_by(classroom_id=classroom.id).all()
+            if not students:
                 continue
 
-            parent = db.query(models.Parent).get(student.parent_id)
-            if not parent:
-                continue
-
-            for student_id in [student.id]:
+            for student in students:
+                student_id = student.id
                 assignments = (
                     db.query(models.Assignment)
                     .filter(

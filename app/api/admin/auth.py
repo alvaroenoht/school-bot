@@ -58,7 +58,9 @@ async def request_otp(req: OTPRequest, db: Session = Depends(get_db)):
     is_admin = is_super_admin(req.phone)
     if not is_admin:
         # Check if they have ANY role in ANY classroom
-        role = db.query(models.ClassroomRole).filter(models.ClassroomRole.user_jid.contains(req.phone)).first()
+        role = db.query(models.ClassroomRole).filter(
+            models.ClassroomRole.user_jid == f"{req.phone}@c.us"
+        ).first()
         if not role:
             # Also check if they are a registered parent (maybe they are a delegate but not yet in ClassroomRole)
             # Actually, per plan, delegates MUST be in ClassroomRole.
@@ -104,6 +106,24 @@ async def verify_otp(req: OTPVerify, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": req.phone})
     return {"access_token": access_token, "token_type": "bearer"}
 
+def require_write_access(admin: dict, classroom_id: int | None = None):
+    """Raise 403 if the user is soporte-only (no write role).
+    If classroom_id given, checks write access for that specific classroom.
+    If None, checks that they have at least one non-soporte role anywhere.
+    Super admin always passes.
+    """
+    if admin["is_super_admin"]:
+        return
+    roles = admin["roles"]
+    if classroom_id is not None:
+        matching = [r for r in roles if r["classroom_id"] == classroom_id]
+        if not matching or all(r["role"] == "soporte" for r in matching):
+            raise HTTPException(status_code=403, detail="Read-only access for this classroom")
+    else:
+        if not roles or all(r["role"] == "soporte" for r in roles):
+            raise HTTPException(status_code=403, detail="Read-only access")
+
+
 async def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -122,7 +142,9 @@ async def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = D
     is_admin = is_super_admin(phone)
     roles = []
     if not is_admin:
-        db_roles = db.query(models.ClassroomRole).filter(models.ClassroomRole.user_jid.contains(phone)).all()
+        db_roles = db.query(models.ClassroomRole).filter(
+            models.ClassroomRole.user_jid == f"{phone}@c.us"
+        ).all()
         if not db_roles:
             raise HTTPException(status_code=403, detail="No longer authorized")
         roles = [{"classroom_id": r.classroom_id, "role": r.role} for r in db_roles]

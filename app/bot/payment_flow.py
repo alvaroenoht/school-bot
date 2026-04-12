@@ -55,7 +55,7 @@ async def start_from_command(
         if active:
             lines = ["\u2753 No encontr\u00e9 esa actividad. Activas:\n"]
             for f in active:
-                lines.append(f"  \u2022 `{f.name}` (ID {f.id})")
+                lines.append(f"  \u2022 *{f.code}* \u2014 {f.name}")
             wa.send_text(chat_id, "\n".join(lines))
         else:
             wa.send_text(chat_id, "\u26a0\ufe0f No hay actividades activas en este momento.")
@@ -92,7 +92,7 @@ async def start_from_command(
                     "Continuando donde lo dejaste...",
                 )
                 if existing.step == "awaiting_receipt":
-                    _send_payment_instructions(chat_id, fundraiser, existing.data)
+                    _send_payment_instructions(chat_id, fundraiser, existing.data, db=db, payer_jid=raw_jid)
                 elif existing.step in ("awaiting_manual_amount",):
                     wa.send_text(chat_id, "Ingresa el *monto pagado* (ej: `25.00`):")
                 elif existing.step == "awaiting_manual_code":
@@ -162,7 +162,107 @@ async def start_from_command(
         if fundraiser.type == "variable":
             _send_catalog(chat_id, fundraiser, db)
         else:
-            _send_payment_instructions(chat_id, fundraiser, data)
+            _send_payment_instructions(chat_id, fundraiser, data, db=db, payer_jid=raw_jid)
+
+
+async def show_pending(raw_jid: str, chat_id: str, db: Session, payer):
+    """Show list of pending fundraisers and forms for this parent/contact."""
+    # Determine classroom IDs
+    if isinstance(payer, models.Parent):
+        student_cls = db.query(models.Student).filter(
+            models.Student.id.in_(payer.student_ids or [])
+        ).all()
+        classroom_ids = list({s.classroom_id for s in student_cls if s.classroom_id})
+        # Also include KCG classrooms
+        kcgs = db.query(models.KnownContactGroup).filter_by(
+            contact_jid=payer.whatsapp_jid, active=True
+        ).all()
+        classroom_ids = list(set(classroom_ids) | {kcg.classroom_id for kcg in kcgs})
+    elif isinstance(payer, models.KnownContact):
+        kcgs = db.query(models.KnownContactGroup).filter_by(
+            contact_jid=payer.jid, active=True
+        ).all()
+        classroom_ids = [kcg.classroom_id for kcg in kcgs]
+    else:
+        classroom_ids = []
+
+    if not classroom_ids:
+        wa.send_text(chat_id, "No estás vinculado a ningún grupo escolar.")
+        return
+
+    payer_jid = payer.whatsapp_jid if isinstance(payer, models.Parent) else payer.jid
+
+    # Get children names for this payer
+    _, children = _resolve_payer_info(payer, db)
+
+    # Active fundraisers that target any of the parent's classrooms
+    all_funds = db.query(models.Fundraiser).filter_by(status="active").all()
+    relevant_funds = [
+        f for f in all_funds
+        if any(cid in (f.audience_classroom_ids or []) for cid in classroom_ids)
+    ]
+
+    # Open forms
+    from sqlalchemy import distinct
+    form_ids = [
+        a.form_id for a in
+        db.query(models.FormAudience)
+        .filter(models.FormAudience.classroom_id.in_(classroom_ids))
+        .all()
+    ]
+    open_forms = db.query(models.Form).filter(
+        models.Form.id.in_(form_ids), models.Form.status == "open"
+    ).all() if form_ids else []
+
+    # Check which forms already submitted
+    submitted_form_ids = {
+        s.form_id for s in
+        db.query(models.FormSubmission)
+        .filter_by(respondent_jid=payer_jid, status="submitted")
+        .all()
+    }
+
+    lines = ["📋 *Pendientes:*\n"]
+    has_items = False
+
+    # Fundraisers
+    for f in relevant_funds:
+        has_items = True
+        if f.type == "fixed" and f.fixed_amount:
+            fixed = Decimal(f.fixed_amount or "0")
+            # Check per child
+            status_parts = []
+            for child in children:
+                paid = _get_paid_total(f.id, payer_jid, child, db)
+                if paid >= fixed:
+                    status_parts.append(f"✅ {child}")
+                elif paid > 0:
+                    status_parts.append(f"⚠️ {child} ${paid}/${fixed}")
+                else:
+                    status_parts.append(f"❌ {child}")
+            status = " | ".join(status_parts) if len(children) > 1 else status_parts[0] if status_parts else "❌ Pendiente"
+            lines.append(f"💳 *{f.code}* — {f.name} (${fixed})\n   {status}")
+        else:
+            # Variable: just check if any payment exists
+            has_payment = db.query(models.Payment).filter_by(
+                fundraiser_id=f.id, payer_jid=payer_jid,
+            ).filter(models.Payment.status.in_(["confirmed", "pending"])).first()
+            status = "✅ Pagado" if has_payment else "❌ Pendiente"
+            lines.append(f"💳 *{f.code}* — {f.name}\n   {status}")
+
+    # Forms
+    for form in open_forms:
+        has_items = True
+        done = form.id in submitted_form_ids
+        status = "✅ Enviado" if done else "❌ Pendiente"
+        lines.append(f"📝 *{form.form_code}* — {form.title}\n   {status}")
+
+    if not has_items:
+        wa.send_text(chat_id, "✅ No tienes actividades ni formularios pendientes.")
+        return
+
+    lines.append("\nEscribe el *código* para iniciar.")
+    wa.send_text(chat_id, "\n\n".join(lines))
 
 
 async def handle(
@@ -220,7 +320,7 @@ async def handle(
                 _send_catalog(chat_id, fundraiser, db)
             else:
                 _advance(session, "awaiting_receipt", data, db)
-                _send_payment_instructions(chat_id, fundraiser, data)
+                _send_payment_instructions(chat_id, fundraiser, data, db=db, payer_jid=raw_jid)
         else:
             wa.send_text(chat_id, f"Elige un n\u00famero del 1 al {len(children)}:")
 
@@ -241,7 +341,7 @@ async def handle(
         if text.lower() in ("si", "s\u00ed", "yes", "confirmar"):
             fundraiser = db.query(models.Fundraiser).get(data["fundraiser_id"])
             _advance(session, "awaiting_receipt", data, db)
-            _send_payment_instructions(chat_id, fundraiser, data)
+            _send_payment_instructions(chat_id, fundraiser, data, db=db, payer_jid=raw_jid)
         elif text.lower() in ("no", "cambiar", "editar"):
             data["_no_count"] = data.get("_no_count", 0) + 1
             fundraiser = db.query(models.Fundraiser).get(data["fundraiser_id"])
@@ -305,9 +405,18 @@ async def handle(
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 def _find_fundraiser(search: str, db: Session) -> models.Fundraiser | None:
-    """Find fundraiser by ID or name (case-insensitive partial match)."""
+    """Find fundraiser by ID, code, or name (case-insensitive partial match)."""
     if search.isdigit():
         return db.query(models.Fundraiser).get(int(search))
+    # Exact code match first
+    by_code = (
+        db.query(models.Fundraiser)
+        .filter(models.Fundraiser.code.ilike(search), models.Fundraiser.status == "active")
+        .first()
+    )
+    if by_code:
+        return by_code
+    # Partial name match
     return (
         db.query(models.Fundraiser)
         .filter(
@@ -326,14 +435,54 @@ def _resolve_payer_info(payer, db: Session) -> tuple[str, list[str]]:
         children = [f"{s.name} ({s.grade})" for s in students] if students else [name]
         return name, children
     elif isinstance(payer, models.KnownContact):
-        return payer.name, [payer.child_name]
+        # child_name lives on KCG (per-classroom); collect all for this contact
+        kcgs = db.query(models.KnownContactGroup).filter_by(contact_jid=payer.jid, active=True).all()
+        seen = set()
+        children = []
+        for kcg in kcgs:
+            if kcg.child_name and kcg.child_name.lower() not in seen:
+                seen.add(kcg.child_name.lower())
+                children.append(kcg.child_name)
+        if not children and payer.child_name:
+            children = [payer.child_name]
+        return payer.name, children if children else [payer.name]
     return "Desconocido", ["Desconocido"]
 
 
-def _send_payment_instructions(chat_id: str, fundraiser: models.Fundraiser, data: dict):
-    """Show amount + account number, ask for receipt."""
+def _get_paid_total(fundraiser_id: int, payer_jid: str, child_name: str | None, db: Session) -> Decimal:
+    """Sum confirmed payments for this payer+child+fundraiser."""
+    payments = db.query(models.Payment).filter_by(
+        fundraiser_id=fundraiser_id, payer_jid=payer_jid, status="confirmed",
+    ).all()
+    total = Decimal("0")
+    for p in payments:
+        if child_name and p.child_name and p.child_name.lower() != child_name.lower():
+            continue
+        try:
+            total += Decimal(p.amount or "0")
+        except InvalidOperation:
+            pass
+    return total
+
+
+def _send_payment_instructions(chat_id: str, fundraiser: models.Fundraiser, data: dict,
+                                db: Session | None = None, payer_jid: str | None = None):
+    """Show amount + account number + partial payment info, ask for receipt."""
     if fundraiser.type == "fixed":
-        amount_line = f"\U0001f4b5 Monto: *${fundraiser.fixed_amount}*"
+        fixed = Decimal(fundraiser.fixed_amount or "0")
+        amount_line = f"\U0001f4b5 Monto total: *${fixed}*"
+
+        # Show partial payment progress if applicable
+        if db and payer_jid:
+            paid = _get_paid_total(fundraiser.id, payer_jid, data.get("child_name"), db)
+            if paid > 0:
+                remaining = max(fixed - paid, Decimal("0"))
+                amount_line = (
+                    f"\U0001f4b5 Monto total: *${fixed}*\n"
+                    f"✅ Ya pagaste: *${paid}*\n"
+                    f"💳 Pendiente: *${remaining}*\n\n"
+                    "Puedes pagar el total pendiente o un abono parcial."
+                )
     else:
         amount_line = f"\U0001f4b5 Total del pedido: *${data.get('cart_total', '?')}*"
 
@@ -460,6 +609,19 @@ async def _process_receipt_image(
         )
         return
 
+    # Upload receipt image to S3 for later admin viewing
+    try:
+        from app.utils.s3_upload import upload_bytes_to_s3
+        fundraiser_id = data.get("fundraiser_id", "unknown")
+        jid_safe = raw_jid.replace("@", "_").replace(".", "_")
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        s3_key = f"receipts/{fundraiser_id}/{jid_safe}/{ts}.jpg"
+        receipt_url = upload_bytes_to_s3(image_bytes, s3_key)
+        data["receipt_url"] = receipt_url
+    except Exception as e:
+        logger.warning(f"S3 upload failed for {raw_jid}: {e}")
+        data["receipt_url"] = None
+
     # Run Textract
     try:
         from app.api.textract_client import analyze_receipt
@@ -541,7 +703,7 @@ async def _finalize_payment(
         child_name=data.get("child_name"),
         amount=data.get("ocr_amount"),
         confirmation_code=data.get("confirmation_code"),
-        receipt_media_url=data.get("receipt_message_id"),
+        receipt_media_url=data.get("receipt_url"),
         confidence_score=data.get("ocr_confidence"),
         status="flagged" if flagged else "confirmed",
         flag_reason=flag_reason,
@@ -572,12 +734,24 @@ async def _finalize_payment(
     db.commit()
 
     status_icon = "\u26a0\ufe0f" if flagged else "\u2705"
+    # Build cumulative progress for fixed fundraisers
+    progress_line = ""
+    if fundraiser.type == "fixed" and fundraiser.fixed_amount:
+        fixed = Decimal(fundraiser.fixed_amount or "0")
+        paid_total = _get_paid_total(fundraiser.id, raw_jid, data.get("child_name"), db)
+        remaining = max(fixed - paid_total, Decimal("0"))
+        if remaining > 0:
+            progress_line = f"\n  \u2022 Total pagado: ${paid_total} / ${fixed} \u2014 Pendiente: ${remaining}"
+        else:
+            progress_line = f"\n  \u2022 Total pagado: ${paid_total} / ${fixed} \u2014 \u2705 Completo"
+
     wa.send_text(
         chat_id,
         f"{status_icon} *Pago registrado para {fundraiser.name}*\n\n"
         f"  \u2022 Estudiante: {data.get('child_name', '?')}\n"
         f"  \u2022 Monto: ${data.get('ocr_amount', '?')}\n"
-        f"  \u2022 C\u00f3digo: {data.get('confirmation_code', 'N/A')}\n\n"
+        f"  \u2022 C\u00f3digo: {data.get('confirmation_code', 'N/A')}"
+        f"{progress_line}\n\n"
         "\u00a1Gracias por tu pago!",
     )
 
@@ -621,7 +795,7 @@ async def _finalize_payment(
         wa.send_text(
             chat_id,
             f"▶️ Tienes un pago pendiente para *{int_name}*.\n"
-            f"Escribe `/pagar {int_name}` para retomarlo.",
+            "Escribe `pagar` para ver tus pendientes.",
         )
 
 
@@ -733,7 +907,7 @@ async def _escalate_to_agent(
                 wa.send_text(chat_id, "Vamos a intentar de nuevo. Aquí está el catálogo:")
                 _send_catalog(chat_id, fundraiser, db)
             else:
-                _send_payment_instructions(chat_id, fundraiser, data)
+                _send_payment_instructions(chat_id, fundraiser, data, db=db, payer_jid=raw_jid)
 
     elif action_type == "natural_reply" and action.get("text"):
         wa.send_text(chat_id, action["text"])

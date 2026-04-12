@@ -209,9 +209,11 @@ def _build_sender_context(sender, is_admin: bool, db: Session) -> str:
             classroom_line = "Salones vinculados: " + ", ".join(names)
         else:
             classroom_line = "Sin salón vinculado"
+        child_names = [kcg.child_name for kcg in active_kcgs if kcg.child_name]
+        child_line = ", ".join(child_names) if child_names else "no registrado"
         return (
             f"Usuario: {sender.name} (contacto del grupo, no registrado)\n"
-            f"Hijo/a: {sender.child_name}\n"
+            f"Hijo/a: {child_line}\n"
             f"{classroom_line}"
         )
     return "Usuario: desconocido"
