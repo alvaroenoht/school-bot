@@ -7,23 +7,23 @@ version: "3.9"
 services:
 
   schoolbot:
-    ports:
+    ports: !override
       - "127.0.0.1:8080:8000"   # only localhost — nginx proxies to here
     environment:
       - WAHA_URL=http://waha:3000
 
   admin-panel:
-    ports:
+    ports: !override
       - "127.0.0.1:3001:3000"   # only localhost — nginx proxies to here
 
   waha:
-    ports:
+    ports: !override
       - "127.0.0.1:3002:3000"   # only localhost — for QR scan via SSH tunnel
     environment:
       - WHATSAPP_HOOK_URL=http://schoolbot:8000/webhook/whatsapp
 
   postgres:
-    ports: []                    # no external access
+    ports: !override []          # no external access
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-schoolbot}
 
