@@ -691,9 +691,6 @@ export default function AdminApp() {
                   className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-200 active:scale-95 transition-transform">
                   {loading ? '...' : t.get_code}
                 </button>
-                <p className="text-[10px] text-slate-400">
-                  Dev: <button type="button" className="text-indigo-500 font-black" onClick={() => { setPhone('123456'); setCode('000000'); setStep('code'); }}>usar 123456</button>
-                </p>
               </motion.form>
             )}
 
@@ -701,7 +698,7 @@ export default function AdminApp() {
               <motion.form key="code-step" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
                 onSubmit={handleLogin} className="space-y-4">
                 <p className="text-sm text-slate-500 mb-2">
-                  {phone === '123456' ? '🔧 Modo dev — código:' : 'Código enviado a'} <span className="font-black text-slate-800">{phone === '123456' ? '000000' : `+${phone}`}</span>
+                  {'Código enviado a'} <span className="font-black text-slate-800">{`+${phone}`}</span>
                 </p>
                 <input type="text" placeholder={t.code_placeholder} value={code} onChange={e => setCode(e.target.value)}
                   className="w-full px-6 py-5 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-2 focus:ring-indigo-500/20 text-center tracking-[0.5em] text-2xl"

@@ -45,15 +45,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 def is_super_admin(phone: str) -> bool:
-    if phone == "123456": return True # Preview backdoor
     settings = get_settings()
     return phone == settings.admin_phone
 
 @router.post("/otp-request")
 async def request_otp(req: OTPRequest, db: Session = Depends(get_db)):
-    if req.phone == "123456":
-        return {"status": "ok", "message": "Preview Mode: Use code 000000"}
-    
     # 1. Check if user is an admin or delegate
     is_admin = is_super_admin(req.phone)
     if not is_admin:
@@ -80,16 +76,12 @@ async def request_otp(req: OTPRequest, db: Session = Depends(get_db)):
 
     # 4. Send via WhatsApp
     chat_id = f"{req.phone}@c.us"
-    wa.send_text(chat_id, f"🔐 *SchoolBot Admin*\n\nYour login code is: *{otp}*\n\nExpires in 10 minutes.")
+    wa.send_text(chat_id, f"🔐 *EduLink Admin*\n\nYour login code is: *{otp}*\n\nExpires in 10 minutes.")
 
     return {"status": "ok", "message": "OTP sent via WhatsApp"}
 
 @router.post("/otp-verify", response_model=Token)
 async def verify_otp(req: OTPVerify, db: Session = Depends(get_db)):
-    if req.phone == "123456" and req.code == "000000":
-        access_token = create_access_token(data={"sub": req.phone})
-        return {"access_token": access_token, "token_type": "bearer"}
-
     db_session = db.query(models.AdminSession).filter(
         models.AdminSession.phone == req.phone,
         models.AdminSession.otp_code == req.code,
