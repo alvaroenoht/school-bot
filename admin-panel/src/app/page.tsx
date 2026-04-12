@@ -674,8 +674,8 @@ export default function AdminApp() {
       <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-6 text-center">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
           className="w-full max-w-sm bg-white rounded-[3rem] p-10 shadow-2xl shadow-slate-200 border border-slate-50">
-          <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-indigo-200 mx-auto -rotate-6">
-            <Lock className="text-white w-10 h-10" />
+          <div className="w-24 h-24 mb-8 mx-auto">
+            <img src="/icon-512.png" alt="EduLink" className="w-full h-full object-contain rounded-3xl shadow-2xl shadow-indigo-200" />
           </div>
           <h1 className="text-3xl font-black tracking-tighter text-slate-800">EduLink</h1>
           <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.2em] mb-10">{t.welcome}</p>

@@ -95,7 +95,10 @@ async def verify_otp(req: OTPVerify, db: Session = Depends(get_db)):
     db.delete(db_session)
     db.commit()
 
-    access_token = create_access_token(data={"sub": req.phone})
+    access_token = create_access_token(
+        data={"sub": req.phone},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 def require_write_access(admin: dict, classroom_id: int | None = None):
