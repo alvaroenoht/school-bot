@@ -183,17 +183,25 @@ async def list_members(
     classroom = db.query(models.Classroom).filter_by(id=classroom_id).first()
     wa_untracked: list[dict] = []
     if classroom and classroom.whatsapp_group_id:
-        tracked_jids = {kcg.contact_jid for kcg in kcgs}
+        # Build set of phones already tracked (KCG uses @lid JIDs, WA returns @c.us)
+        tracked_phones: set[str] = set()
+        for kcg in kcgs:
+            kc = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
+            phone = (kc.phone if kc else None) or kcg.contact_jid.replace("@c.us", "").replace("@lid", "")
+            tracked_phones.add(phone)
+
         live_jids = wa.get_group_participants(classroom.whatsapp_group_id)
         for jid in live_jids:
-            if jid in tracked_jids or not jid:
+            if not jid:
+                continue
+            phone = jid.replace("@c.us", "").replace("@lid", "")
+            if phone in tracked_phones:
                 continue
             # Check if they have a KnownContact record (from another group)
-            kc = db.query(models.KnownContact).filter_by(jid=jid).first()
-            phone = (kc.phone if kc else None) or jid.replace("@c.us", "").replace("@lid", "")
+            kc = db.query(models.KnownContact).filter_by(phone=phone).first()
             wa_untracked.append({
                 "jid": jid,
-                "name": kc.name if kc else jid.replace("@c.us", ""),
+                "name": kc.name if kc else phone,
                 "phone": phone,
             })
 
@@ -250,23 +258,25 @@ async def add_contact(
 ):
     """Add an untracked WhatsApp group member as a known contact."""
     require_write_access(admin, classroom_id)
-    # Get or create KnownContact
-    kc = db.query(models.KnownContact).filter_by(jid=req.jid).first()
+    phone = req.jid.replace("@c.us", "").replace("@lid", "")
+    # Get or create KnownContact — match by phone since JID format may differ (@lid vs @c.us)
+    kc = db.query(models.KnownContact).filter_by(phone=phone).first()
     if not kc:
-        phone = req.jid.replace("@c.us", "").replace("@lid", "")
-        kc = models.KnownContact(jid=req.jid, phone=phone)
+        kc = db.query(models.KnownContact).filter_by(jid=req.jid).first()
+    if not kc:
+        kc = models.KnownContact(jid=req.jid, phone=phone, name=req.child_name.strip())
         db.add(kc)
         db.flush()
-    # Get or create KnownContactGroup
+    # Get or create KnownContactGroup — check by phone match too
     kcg = db.query(models.KnownContactGroup).filter_by(
-        contact_jid=req.jid, classroom_id=classroom_id
+        contact_jid=kc.jid, classroom_id=classroom_id
     ).first()
     if kcg:
         kcg.child_name = req.child_name.strip()
         kcg.active = True
     else:
         kcg = models.KnownContactGroup(
-            contact_jid=req.jid,
+            contact_jid=kc.jid,
             classroom_id=classroom_id,
             child_name=req.child_name.strip(),
             active=True,
