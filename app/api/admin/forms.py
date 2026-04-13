@@ -72,24 +72,58 @@ async def remind_incomplete(form_id: int, db: Session = Depends(get_db), admin: 
     require_write_access(admin)
     form = db.query(models.Form).filter_by(id=form_id).first()
     if not form: raise HTTPException(status_code=404)
-    
+
     # 1. Target JIDs — from KnownContactGroup (tracked contacts only)
     target_jids = set()
     for aud in form.audience:
         kcgs = db.query(models.KnownContactGroup).filter_by(classroom_id=aud.classroom_id, active=True).all()
         for kcg in kcgs:
             target_jids.add(kcg.contact_jid)
-        
+
     # 2. Responded JIDs
     submitted_jids = {s.respondent_jid for s in form.submissions if s.status == 'submitted'}
     unanswered_jids = target_jids - submitted_jids
-    
+
     # 3. Notify
     msg = f"🔔 *Recordatorio: {form.title}*\n\nAún no hemos recibido tu respuesta.\n\nPara completarlo, responde con el código:\n*{form.form_code}*"
     for jid in unanswered_jids:
         wa.send_text(jid, msg)
-        
+
     return {"sent_count": len(unanswered_jids)}
+
+
+@router.post("/{form_id}/start-all")
+async def start_form_for_all(form_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    """Directly start the form session for all unanswered audience members."""
+    require_write_access(admin)
+    form = db.query(models.Form).filter_by(id=form_id).first()
+    if not form: raise HTTPException(status_code=404)
+    if form.status not in ("open", "active"):
+        raise HTTPException(status_code=400, detail="Form is not open/active")
+
+    from app.bot.form_flow import start_from_code
+
+    # Collect unanswered JIDs
+    target_jids = set()
+    for aud in form.audience:
+        kcgs = db.query(models.KnownContactGroup).filter_by(classroom_id=aud.classroom_id, active=True).all()
+        for kcg in kcgs:
+            target_jids.add(kcg.contact_jid)
+    submitted_jids = {s.respondent_jid for s in form.submissions if s.status == 'submitted'}
+    # Also exclude anyone with an active form session already
+    active_session_jids = {
+        s.chat_jid for s in db.query(models.ConversationSession).filter_by(flow="form_respond").all()
+        if (s.data or {}).get("form_id") == form.id
+    }
+    pending_jids = target_jids - submitted_jids - active_session_jids
+
+    started = 0
+    for jid in pending_jids:
+        # Resolve chat_id (use same JID for DM)
+        await start_from_code(jid, jid, form.form_code, db, admin_override=True)
+        started += 1
+
+    return {"started": started, "total_audience": len(target_jids), "already_submitted": len(submitted_jids)}
 
 @router.get("")
 async def list_forms(

@@ -57,7 +57,7 @@ async def handle(
             # Parent case: list of student IDs
             if student_options and 0 <= idx < len(student_options):
                 data["student_id"] = student_options[idx]
-                if form.status != "open":
+                if form.status not in ("open", "active"):
                     db.delete(session)
                     db.commit()
                     wa.send_text(chat_id, f"⚠️ El formulario *{form.title}* ya no está disponible.")
@@ -69,7 +69,7 @@ async def handle(
                 option = class_options.get(text)
                 if option:
                     data["student_id"] = option["student_id"]
-                    if form.status != "open":
+                    if form.status not in ("open", "active"):
                         db.delete(session)
                         db.commit()
                         wa.send_text(chat_id, f"⚠️ El formulario *{form.title}* ya no está disponible.")
@@ -88,7 +88,7 @@ async def handle(
             return
 
         if text == "1" or text.lower() in ("si", "sí", "yes", "comenzar", "iniciar", "start"):
-            if form.status != "open":
+            if form.status not in ("open", "active"):
                 db.delete(session)
                 db.commit()
                 wa.send_text(chat_id, f"⚠️ El formulario *{form.title}* ya no está disponible.")
@@ -103,7 +103,7 @@ async def handle(
 
     # ── answering ─────────────────────────────────────────────────────────
     elif step == "answering":
-        if form.status != "open":
+        if form.status not in ("open", "active"):
             wa.send_text(
                 chat_id,
                 "⚠️ Este formulario ha sido cerrado. Tus respuestas parciales no fueron enviadas.",
@@ -540,7 +540,10 @@ async def start_from_code(raw_jid: str, chat_id: str, code: str, db: Session, ad
     Handle a parent sending FORM-XXXXX directly (e.g. from a wa.me deep link).
     Called from webhook when no active session exists and text matches the code pattern.
     """
-    form = db.query(models.Form).filter_by(form_code=code.upper(), status="open").first()
+    form = db.query(models.Form).filter(
+        models.Form.form_code == code.upper(),
+        models.Form.status.in_(["open", "active"]),
+    ).first()
     if not form:
         wa.send_text(
             chat_id,
