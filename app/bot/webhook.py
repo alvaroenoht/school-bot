@@ -101,7 +101,7 @@ def _resolve_code(text: str, db) -> tuple[str, object] | None:
     # Form code (exact, case-insensitive)
     form = (
         db.query(models.Form)
-        .filter(models.Form.form_code.ilike(code), models.Form.status == "open")
+        .filter(models.Form.form_code.ilike(code), models.Form.status.in_(["open", "active"]))
         .first()
     )
     if form:
