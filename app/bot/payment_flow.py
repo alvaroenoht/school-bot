@@ -65,8 +65,8 @@ async def start_from_command(
         wa.send_text(chat_id, f"\U0001f6d1 La actividad *{fundraiser.name}* est\u00e1 cerrada.")
         return
 
-    # Determine payer info
-    payer_name, children = _resolve_payer_info(payer, db)
+    # Determine payer info — only children in fundraiser's audience
+    payer_name, children = _resolve_payer_info(payer, db, fundraiser.audience_classroom_ids)
 
     # Build session data
     data = {
@@ -192,9 +192,6 @@ async def show_pending(raw_jid: str, chat_id: str, db: Session, payer):
 
     payer_jid = payer.whatsapp_jid if isinstance(payer, models.Parent) else payer.jid
 
-    # Get children names for this payer
-    _, children = _resolve_payer_info(payer, db)
-
     # Active fundraisers that target any of the parent's classrooms
     all_funds = db.query(models.Fundraiser).filter_by(status="active").all()
     relevant_funds = [
@@ -228,11 +225,12 @@ async def show_pending(raw_jid: str, chat_id: str, db: Session, payer):
     # Fundraisers
     for f in relevant_funds:
         has_items = True
+        _, f_children = _resolve_payer_info(payer, db, f.audience_classroom_ids)
         if f.type == "fixed" and f.fixed_amount:
             fixed = Decimal(f.fixed_amount or "0")
             # Check per child
             status_parts = []
-            for child in children:
+            for child in f_children:
                 paid = _get_paid_total(f.id, payer_jid, child, db)
                 if paid >= fixed:
                     status_parts.append(f"✅ {child}")
@@ -240,7 +238,7 @@ async def show_pending(raw_jid: str, chat_id: str, db: Session, payer):
                     status_parts.append(f"⚠️ {child} ${paid}/${fixed}")
                 else:
                     status_parts.append(f"❌ {child}")
-            status = " | ".join(status_parts) if len(children) > 1 else status_parts[0] if status_parts else "❌ Pendiente"
+            status = " | ".join(status_parts) if len(f_children) > 1 else status_parts[0] if status_parts else "❌ Pendiente"
             lines.append(f"💳 *{f.code}* — {f.name} (${fixed})\n   {status}")
         else:
             # Variable: just check if any payment exists
@@ -427,16 +425,22 @@ def _find_fundraiser(search: str, db: Session) -> models.Fundraiser | None:
     )
 
 
-def _resolve_payer_info(payer, db: Session) -> tuple[str, list[str]]:
-    """Return (payer_name, list_of_children_names)."""
+def _resolve_payer_info(payer, db: Session, audience_classroom_ids: list[int] | None = None) -> tuple[str, list[str]]:
+    """Return (payer_name, list_of_children_names).
+
+    If audience_classroom_ids is given, only return children in those classrooms.
+    """
     if isinstance(payer, models.Parent):
         name = f"{payer.first_name} {payer.last_name}"
         students = db.query(models.Student).filter_by(parent_id=payer.id).all()
         children = [f"{s.name} ({s.grade})" for s in students] if students else [name]
         return name, children
     elif isinstance(payer, models.KnownContact):
-        # child_name lives on KCG (per-classroom); collect all for this contact
-        kcgs = db.query(models.KnownContactGroup).filter_by(contact_jid=payer.jid, active=True).all()
+        # child_name lives on KCG (per-classroom); collect only from audience classrooms
+        q = db.query(models.KnownContactGroup).filter_by(contact_jid=payer.jid, active=True)
+        if audience_classroom_ids:
+            q = q.filter(models.KnownContactGroup.classroom_id.in_(audience_classroom_ids))
+        kcgs = q.all()
         seen = set()
         children = []
         for kcg in kcgs:
