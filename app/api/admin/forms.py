@@ -40,6 +40,7 @@ class FormCreate(BaseModel):
 class FormUpdate(BaseModel):
     status: Optional[str] = None
     title: Optional[str] = None
+    description: Optional[str] = None
     audience_classroom_ids: Optional[List[int]] = None
 
 @router.post("")
@@ -128,7 +129,7 @@ async def list_forms(
             audience_count = 0
         submitted = db.query(models.FormSubmission).filter_by(form_id=f.id, status="submitted").count()
         result.append({
-            "id": f.id, "title": f.title, "purpose": f.purpose, "status": f.status,
+            "id": f.id, "title": f.title, "description": f.description, "purpose": f.purpose, "status": f.status,
             "form_code": f.form_code,
             "submitted_count": submitted,
             "audience_count": audience_count,
@@ -206,6 +207,7 @@ async def update_form(form_id: int, req: FormUpdate, db: Session = Depends(get_d
 
     if req.status: form.status = req.status
     if req.title: form.title = req.title
+    if req.description is not None: form.description = req.description
     if req.audience_classroom_ids is not None:
         db.query(models.FormAudience).filter_by(form_id=form_id).delete()
         for cid in req.audience_classroom_ids:

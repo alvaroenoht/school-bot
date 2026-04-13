@@ -165,10 +165,12 @@ export default function AdminApp() {
   const [editAudience, setEditAudience] = useState<number[]>([]);
   const [editFixedAmount, setEditFixedAmount] = useState('');
   const [editProducts, setEditProducts] = useState<Product[]>([]);
+  const [editAccount, setEditAccount] = useState('');
 
   // Form edit
   const [editingForm, setEditingForm] = useState<any>(null);
   const [editFormTitle, setEditFormTitle] = useState('');
+  const [editFormDesc, setEditFormDesc] = useState('');
   const [editFormAudience, setEditFormAudience] = useState<number[]>([]);
 
   // Contact assignment
@@ -507,13 +509,14 @@ export default function AdminApp() {
     setEditAudience(item.audience_classroom_ids || []);
     setEditFixedAmount(item.fixed_amount || '');
     setEditProducts(item.products?.length ? item.products : [{ name: '', price: '' }]);
+    setEditAccount(item.account_number || '');
   };
 
   const saveEditFundraiser = async () => {
     if (!editingFundraiser) return;
     setLoading(true);
     try {
-      const payload: any = { name: editName, audience_classroom_ids: editAudience };
+      const payload: any = { name: editName, audience_classroom_ids: editAudience, account_number: editAccount };
       if (editingFundraiser.type === 'fixed') payload.fixed_amount = editFixedAmount;
       if (editingFundraiser.type === 'variable') payload.products = editProducts.filter((p: Product) => p.name);
       await api.patch(`/fundraisers/${editingFundraiser.id}`, payload);
@@ -528,6 +531,7 @@ export default function AdminApp() {
     setEditingForm(item);
     setEditFormTitle(item.title || '');
     setEditFormAudience(item.audience_classroom_ids || []);
+    setEditFormDesc(item.description || '');
   };
 
   const saveEditForm = async () => {
@@ -536,6 +540,7 @@ export default function AdminApp() {
     try {
       await api.patch(`/forms/${editingForm.id}`, {
         title: editFormTitle,
+        description: editFormDesc,
         audience_classroom_ids: editFormAudience,
       });
       setEditingForm(null);
@@ -1435,6 +1440,17 @@ export default function AdminApp() {
                     className="text-indigo-600 text-xs font-black uppercase">+ {t.add_product}</button>
                 </div>
               )}
+              {/* Account */}
+              <div className="space-y-2">
+                <label className="label-sm">{t.fund_account}</label>
+                <select value={accounts.find((a: any) => a.details === editAccount)?.id || ''}
+                  onChange={e => { const acc = accounts.find((a: any) => String(a.id) === e.target.value); if (acc) setEditAccount(acc.details); }}
+                  className="w-full px-4 py-4 bg-slate-50 border-none rounded-2xl font-bold appearance-none outline-none text-sm">
+                  {accounts.map((acc: any) => (
+                    <option key={acc.id} value={String(acc.id)}>{acc.label} · {acc.details}</option>
+                  ))}
+                </select>
+              </div>
               <AudiencePicker label={t.audience} classrooms={classrooms} selected={editAudience}
                 onToggle={(id: number) => toggleAudience(id, editAudience, setEditAudience)} />
               <button onClick={saveEditFundraiser} disabled={loading || !editName.trim()}
@@ -1453,6 +1469,8 @@ export default function AdminApp() {
             <div className="space-y-5">
               <FlatInput label={t.form_title} icon={<FileText className="w-4 h-4" />}
                 value={editFormTitle} onChange={setEditFormTitle} />
+              <FlatInput label={t.form_description} icon={<FileText className="w-4 h-4" />}
+                value={editFormDesc} onChange={setEditFormDesc} />
               <AudiencePicker label={t.audience} classrooms={classrooms} selected={editFormAudience}
                 onToggle={(id: number) => toggleAudience(id, editFormAudience, setEditFormAudience)} />
               <button onClick={saveEditForm} disabled={loading || !editFormTitle.trim()}

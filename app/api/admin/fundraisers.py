@@ -31,6 +31,7 @@ class FundraiserUpdate(BaseModel):
     name: Optional[str] = None
     audience_classroom_ids: Optional[List[int]] = None
     fixed_amount: Optional[str] = None
+    account_number: Optional[str] = None
     products: Optional[List[ProductSchema]] = None
 
 
@@ -89,6 +90,7 @@ def _fund_stats(fund: models.Fundraiser, db: Session) -> dict:
         "code": fund.code,
         "type": fund.type,
         "fixed_amount": fund.fixed_amount,
+        "account_number": fund.account_number,
         "status": fund.status,
         "total_collected": round(total, 2),
         "paid_count": paid_count,
@@ -295,6 +297,8 @@ async def update_fundraiser(fundraiser_id: int, req: FundraiserUpdate, db: Sessi
     if req.name:
         fund.name = req.name
         fund.friendly_name = req.name
+    if req.account_number:
+        fund.account_number = req.account_number
     if req.audience_classroom_ids is not None:
         fund.audience_classroom_ids = req.audience_classroom_ids
     if req.fixed_amount is not None:
