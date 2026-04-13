@@ -187,14 +187,14 @@ async def list_members(
         tracked_phones: set[str] = set()
         for kcg in kcgs:
             kc = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
-            phone = (kc.phone if kc else None) or kcg.contact_jid.replace("@c.us", "").replace("@lid", "")
-            tracked_phones.add(phone)
+            if kc and kc.phone:
+                tracked_phones.add(kc.phone)
 
         live_jids = wa.get_group_participants(classroom.whatsapp_group_id)
         for jid in live_jids:
-            if not jid:
+            if not jid or "@c.us" not in jid:
                 continue
-            phone = jid.replace("@c.us", "").replace("@lid", "")
+            phone = jid.replace("@c.us", "")
             if phone in tracked_phones:
                 continue
             # Check if they have a KnownContact record (from another group)
