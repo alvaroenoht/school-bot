@@ -2,7 +2,7 @@
 # Caddy auto-provisions HTTPS via Let's Encrypt.
 # Requires ports 80 + 443 open and DNS A records pointing to this server.
 
-app.inbilt.co {
+edulink.inbilt.co {
     # Admin panel API calls
     handle /api/admin* {
         reverse_proxy schoolbot:8000
@@ -14,11 +14,11 @@ app.inbilt.co {
     }
 }
 
-api.inbilt.co {
+edulink-api.inbilt.co {
     # WhatsApp webhooks, health, all backend routes
     reverse_proxy schoolbot:8000
 }
 
 inbilt.co {
-    redir https://app.inbilt.co{uri} permanent
+    redir https://edulink.inbilt.co{uri} permanent
 }

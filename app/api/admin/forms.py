@@ -96,7 +96,16 @@ async def list_forms(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    forms = db.query(models.Form).all()
+    if not admin["is_super_admin"]:
+        my_ids = [r["classroom_id"] for r in admin["roles"]]
+        allowed_form_ids = (
+            db.query(models.FormAudience.form_id)
+            .filter(models.FormAudience.classroom_id.in_(my_ids))
+            .subquery()
+        )
+        forms = db.query(models.Form).filter(models.Form.id.in_(allowed_form_ids)).all()
+    else:
+        forms = db.query(models.Form).all()
     if status:
         forms = [f for f in forms if f.status == status]
     elif include_closed:
