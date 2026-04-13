@@ -188,12 +188,26 @@ async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: d
 
     # Build unpaid/partially-paid kids list
     confirmed_payments = [p for p in payments if p.status in ("confirmed", "pending")]
-    # For fixed fundraisers, track total paid per child
+    # Track total paid per child name AND per payer JID
     child_paid_totals: dict[str, float] = {}
+    jid_paid_totals: dict[str, float] = {}
     for p in confirmed_payments:
         if p.child_name:
             key = p.child_name.lower().strip()
             child_paid_totals[key] = child_paid_totals.get(key, 0) + float(p.amount or 0)
+        if p.payer_jid:
+            jid_paid_totals[p.payer_jid] = jid_paid_totals.get(p.payer_jid, 0) + float(p.amount or 0)
+
+    # Map payer phone → paid total (since KCG uses @lid but payments use @c.us)
+    phone_paid_totals: dict[str, float] = {}
+    for jid, total in jid_paid_totals.items():
+        phone = jid.replace("@c.us", "").replace("@lid", "")
+        # For @lid JIDs, resolve phone via KnownContact
+        if "@lid" in jid:
+            kc = db.query(models.KnownContact).filter_by(jid=jid).first()
+            if kc and kc.phone:
+                phone = kc.phone
+        phone_paid_totals[phone] = phone_paid_totals.get(phone, 0) + total
 
     fixed_amount = float(fund.fixed_amount or 0) if fund.type == "fixed" else 0
 
@@ -207,14 +221,20 @@ async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: d
             if not child:
                 continue
             child_key = child.lower()
+            # Check paid by child_name match OR by payer JID/phone
             paid_total = child_paid_totals.get(child_key, 0)
+            if paid_total == 0:
+                kc = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
+                contact_phone = (kc.phone if kc else None) or kcg.contact_jid.replace("@c.us", "").replace("@lid", "")
+                paid_total = phone_paid_totals.get(contact_phone, 0)
+            else:
+                kc = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
             # Fully paid → skip
             if fixed_amount and paid_total >= fixed_amount:
                 continue
             # No payment at all for variable → show as unpaid
             if not fixed_amount and paid_total > 0:
                 continue
-            kc = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
             entry = {
                 "child_name": child,
                 "parent_name": kc.name if kc else None,
