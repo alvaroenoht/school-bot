@@ -179,7 +179,25 @@ async def list_members(
         })
     members.sort(key=lambda r: r["child_name"].lower())
 
-    return {"members": members, "unidentified": unidentified}
+    # Fetch live WA participants and find those not tracked in KCG
+    classroom = db.query(models.Classroom).filter_by(id=classroom_id).first()
+    wa_untracked: list[dict] = []
+    if classroom and classroom.whatsapp_group_id:
+        tracked_jids = {kcg.contact_jid for kcg in kcgs}
+        live_jids = wa.get_group_participants(classroom.whatsapp_group_id)
+        for jid in live_jids:
+            if jid in tracked_jids or not jid:
+                continue
+            # Check if they have a KnownContact record (from another group)
+            kc = db.query(models.KnownContact).filter_by(jid=jid).first()
+            phone = (kc.phone if kc else None) or jid.replace("@c.us", "").replace("@lid", "")
+            wa_untracked.append({
+                "jid": jid,
+                "name": kc.name if kc else jid.replace("@c.us", ""),
+                "phone": phone,
+            })
+
+    return {"members": members, "unidentified": unidentified, "wa_untracked": wa_untracked}
 
 
 class ContactUpdate(BaseModel):
@@ -216,6 +234,46 @@ async def update_contact(
         kcg.is_primary_payer = req.is_primary_payer
     db.commit()
     return {"status": "updated"}
+
+
+class AddContactRequest(BaseModel):
+    jid: str
+    child_name: str
+
+
+@router.post("/{classroom_id}/contacts")
+async def add_contact(
+    classroom_id: int,
+    req: AddContactRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    """Add an untracked WhatsApp group member as a known contact."""
+    require_write_access(admin, classroom_id)
+    # Get or create KnownContact
+    kc = db.query(models.KnownContact).filter_by(jid=req.jid).first()
+    if not kc:
+        phone = req.jid.replace("@c.us", "").replace("@lid", "")
+        kc = models.KnownContact(jid=req.jid, phone=phone)
+        db.add(kc)
+        db.flush()
+    # Get or create KnownContactGroup
+    kcg = db.query(models.KnownContactGroup).filter_by(
+        contact_jid=req.jid, classroom_id=classroom_id
+    ).first()
+    if kcg:
+        kcg.child_name = req.child_name.strip()
+        kcg.active = True
+    else:
+        kcg = models.KnownContactGroup(
+            contact_jid=req.jid,
+            classroom_id=classroom_id,
+            child_name=req.child_name.strip(),
+            active=True,
+        )
+        db.add(kcg)
+    db.commit()
+    return {"status": "created", "contact_id": kc.id, "kcg_id": kcg.id}
 
 
 # ── WhatsApp group binding ─────────────────────────────────────────────────────

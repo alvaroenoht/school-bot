@@ -142,7 +142,11 @@ export default function AdminApp() {
   // Group detail
   const [showGroupConfig, setShowGroupConfig] = useState<any>(false);
   const [groupUnidentified, setGroupUnidentified] = useState<any[]>([]);
+  const [waUntracked, setWaUntracked] = useState<any[]>([]);
   const [showUnidentified, setShowUnidentified] = useState(false);
+  const [showWaUntracked, setShowWaUntracked] = useState(false);
+  const [assigningWaContact, setAssigningWaContact] = useState<any>(null);
+  const [assignWaChildName, setAssignWaChildName] = useState('');
 
   // Delegate assignment
   const [showAssignRole, setShowAssignRole] = useState(false);
@@ -320,7 +324,7 @@ export default function AdminApp() {
   };
 
   const selectGroup = async (g: any) => {
-    setSelectedGroup(g); setGroupMembers([]); setGroupUnidentified([]); setGroupMembersLoading(true);
+    setSelectedGroup(g); setGroupMembers([]); setGroupUnidentified([]); setWaUntracked([]); setGroupMembersLoading(true);
     setShowGroupConfig(false); setShowUnidentified(false);
     try {
       const [mr, lr] = await Promise.all([
@@ -330,6 +334,7 @@ export default function AdminApp() {
       const data = mr.data || {};
       setGroupMembers(data.members || []);
       setGroupUnidentified(data.unidentified || []);
+      setWaUntracked(data.wa_untracked || []);
       if (lr.data.linked) setGroupSeducaLinks(prev => ({ ...prev, [g.id]: lr.data }));
     } catch (e) { console.error(e); }
     finally { setGroupMembersLoading(false); }
@@ -562,6 +567,26 @@ export default function AdminApp() {
       const r = await api.get(`/classrooms/${selectedGroup.id}/members`);
       setGroupMembers(r.data?.members || []);
       setGroupUnidentified(r.data?.unidentified || []);
+      setWaUntracked(r.data?.wa_untracked || []);
+    } catch { setError('Error'); }
+    finally { setLoading(false); }
+  };
+
+  // ── Assign WA untracked contact (POST new KnownContact + KCG) ────────────
+  const saveWaContactAssign = async () => {
+    if (!assigningWaContact || !selectedGroup || !assignWaChildName.trim()) return;
+    setLoading(true);
+    try {
+      await api.post(`/classrooms/${selectedGroup.id}/contacts`, {
+        jid: assigningWaContact.jid,
+        child_name: assignWaChildName.trim(),
+      });
+      setAssigningWaContact(null);
+      setAssignWaChildName('');
+      const r = await api.get(`/classrooms/${selectedGroup.id}/members`);
+      setGroupMembers(r.data?.members || []);
+      setGroupUnidentified(r.data?.unidentified || []);
+      setWaUntracked(r.data?.wa_untracked || []);
     } catch { setError('Error'); }
     finally { setLoading(false); }
   };
@@ -1037,6 +1062,45 @@ export default function AdminApp() {
                                 className="flex-1 px-3 py-2 bg-white rounded-xl text-sm font-bold outline-none border border-slate-200" />
                               <button onClick={saveContactAssign} disabled={!assignChildName.trim()}
                                 className="bg-indigo-600 text-white px-3 py-2 rounded-xl text-xs font-black disabled:opacity-50">
+                                <Check className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* WA group members not yet tracked — collapsible */}
+              {waUntracked.length > 0 && (
+                <div>
+                  <button onClick={() => setShowWaUntracked(v => !v)}
+                    className="text-[10px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-1">
+                    <ChevronRight className={`w-3 h-3 transition-transform ${showWaUntracked ? 'rotate-90' : ''}`} />
+                    {waUntracked.length} miembros del grupo WA sin registrar
+                  </button>
+                  {showWaUntracked && (
+                    <div className="mt-3 space-y-2">
+                      {waUntracked.map((u: any, i: number) => (
+                        <div key={i} className="bg-amber-50 px-4 py-3 rounded-2xl">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="text-xs font-bold text-amber-700">{u.name}</div>
+                              {u.phone && <div className="text-[10px] font-mono text-amber-500">+{u.phone}</div>}
+                            </div>
+                            <button onClick={() => { setAssigningWaContact(u); setAssignWaChildName(''); }}
+                              className="text-amber-600 text-[10px] font-black uppercase">
+                              Identificar
+                            </button>
+                          </div>
+                          {assigningWaContact?.jid === u.jid && (
+                            <div className="mt-2 flex gap-2">
+                              <input placeholder="Nombre del niño" value={assignWaChildName}
+                                onChange={e => setAssignWaChildName(e.target.value)}
+                                className="flex-1 px-3 py-2 bg-white rounded-xl text-sm font-bold outline-none border border-amber-200" />
+                              <button onClick={saveWaContactAssign} disabled={!assignWaChildName.trim()}
+                                className="bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-black disabled:opacity-50">
                                 <Check className="w-3 h-3" />
                               </button>
                             </div>
