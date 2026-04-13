@@ -166,6 +166,15 @@ export default function AdminApp() {
   const [editFixedAmount, setEditFixedAmount] = useState('');
   const [editProducts, setEditProducts] = useState<Product[]>([]);
 
+  // Form edit
+  const [editingForm, setEditingForm] = useState<any>(null);
+  const [editFormTitle, setEditFormTitle] = useState('');
+  const [editFormAudience, setEditFormAudience] = useState<number[]>([]);
+
+  // Contact assignment
+  const [assigningContact, setAssigningContact] = useState<any>(null);
+  const [assignChildName, setAssignChildName] = useState('');
+
   // Form builder
   const [fbTitle, setFbTitle] = useState('');
   const [fbDesc, setFbDesc] = useState('');
@@ -514,6 +523,44 @@ export default function AdminApp() {
     finally { setLoading(false); }
   };
 
+  // ── Edit form ──────────────────────────────────────────────────────────────
+  const openEditForm = (item: any) => {
+    setEditingForm(item);
+    setEditFormTitle(item.title || '');
+    setEditFormAudience(item.audience_classroom_ids || []);
+  };
+
+  const saveEditForm = async () => {
+    if (!editingForm) return;
+    setLoading(true);
+    try {
+      await api.patch(`/forms/${editingForm.id}`, {
+        title: editFormTitle,
+        audience_classroom_ids: editFormAudience,
+      });
+      setEditingForm(null);
+      await fetchAll();
+    } catch { setError('Error saving'); }
+    finally { setLoading(false); }
+  };
+
+  // ── Assign unidentified contact ───────────────────────────────────────────
+  const saveContactAssign = async () => {
+    if (!assigningContact || !selectedGroup || !assignChildName.trim()) return;
+    setLoading(true);
+    try {
+      await api.patch(`/classrooms/${selectedGroup.id}/contacts/${assigningContact.id}`, {
+        child_name: assignChildName.trim(),
+      });
+      setAssigningContact(null);
+      setAssignChildName('');
+      const r = await api.get(`/classrooms/${selectedGroup.id}/members`);
+      setGroupMembers(r.data?.members || []);
+      setGroupUnidentified(r.data?.unidentified || []);
+    } catch { setError('Error'); }
+    finally { setLoading(false); }
+  };
+
   // ── Create handlers ───────────────────────────────────────────────────────
   const createFundraiser = async () => {
     if (!fName.trim()) return;
@@ -815,7 +862,8 @@ export default function AdminApp() {
                 if (!confirm(t.confirm_delete)) return;
                 try { await api.delete(`/fundraisers/${item.id}`); await fetchAll(); }
                 catch (e: any) { setError(e?.response?.data?.detail || 'Error al eliminar'); }
-              }} />
+              }}
+              classrooms={classrooms} />
           )}
 
           {/* Forms list */}
@@ -964,11 +1012,30 @@ export default function AdminApp() {
                   {showUnidentified && (
                     <div className="mt-3 space-y-2">
                       {groupUnidentified.map((u: any, i: number) => (
-                        <div key={i} className="bg-slate-50 px-4 py-3 rounded-2xl flex items-center justify-between">
-                          <div>
-                            <div className="text-xs font-bold text-slate-500">{u.name}</div>
-                            {u.phone && <div className="text-[10px] font-mono text-slate-400">+{u.phone}</div>}
+                        <div key={i} className="bg-slate-50 px-4 py-3 rounded-2xl">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="text-xs font-bold text-slate-500">{u.name}</div>
+                              {u.phone && <div className="text-[10px] font-mono text-slate-400">+{u.phone}</div>}
+                            </div>
+                            {u.id && (
+                              <button onClick={() => { setAssigningContact(u); setAssignChildName(''); }}
+                                className="text-indigo-600 text-[10px] font-black uppercase">
+                                Identificar
+                              </button>
+                            )}
                           </div>
+                          {assigningContact?.kcg_id === u.kcg_id && (
+                            <div className="mt-2 flex gap-2">
+                              <input placeholder="Nombre del niño" value={assignChildName}
+                                onChange={e => setAssignChildName(e.target.value)}
+                                className="flex-1 px-3 py-2 bg-white rounded-xl text-sm font-bold outline-none border border-slate-200" />
+                              <button onClick={saveContactAssign} disabled={!assignChildName.trim()}
+                                className="bg-indigo-600 text-white px-3 py-2 rounded-xl text-xs font-black disabled:opacity-50">
+                                <Check className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1102,8 +1169,8 @@ export default function AdminApp() {
                     className="bg-white/15 px-4 py-2.5 rounded-2xl text-white text-[10px] font-black uppercase">
                     {(reportData?.status || selectedReport.status) === 'active' ? t.close : t.reopen}
                   </button>
-                  {selectedReport.type === 'fundraiser' && (reportData?.status || selectedReport.status) === 'active' && (
-                    <button onClick={() => openEditFundraiser(selectedReport)}
+                  {(reportData?.status || selectedReport.status) === 'active' && (
+                    <button onClick={() => selectedReport.type === 'fundraiser' ? openEditFundraiser(selectedReport) : openEditForm(selectedReport)}
                       className="bg-white/15 px-3 py-2.5 rounded-2xl text-white text-[10px] font-black uppercase flex items-center gap-1">
                       <Pencil className="w-3 h-3" />
                     </button>
@@ -1371,6 +1438,24 @@ export default function AdminApp() {
               <AudiencePicker label={t.audience} classrooms={classrooms} selected={editAudience}
                 onToggle={(id: number) => toggleAudience(id, editAudience, setEditAudience)} />
               <button onClick={saveEditFundraiser} disabled={loading || !editName.trim()}
+                className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
+                {loading ? '...' : 'Guardar'}
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* ── Edit Form Modal ─────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {editingForm && (
+          <Modal title="Editar formulario" onClose={() => setEditingForm(null)}>
+            <div className="space-y-5">
+              <FlatInput label={t.form_title} icon={<FileText className="w-4 h-4" />}
+                value={editFormTitle} onChange={setEditFormTitle} />
+              <AudiencePicker label={t.audience} classrooms={classrooms} selected={editFormAudience}
+                onToggle={(id: number) => toggleAudience(id, editFormAudience, setEditFormAudience)} />
+              <button onClick={saveEditForm} disabled={loading || !editFormTitle.trim()}
                 className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
                 {loading ? '...' : 'Guardar'}
               </button>
