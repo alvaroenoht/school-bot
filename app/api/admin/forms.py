@@ -132,6 +132,7 @@ async def list_forms(
             "form_code": f.form_code,
             "submitted_count": submitted,
             "audience_count": audience_count,
+            "audience_classroom_ids": audience_ids,
             "completion_pct": round(submitted / audience_count * 100) if audience_count else 0,
             "created_at": f.created_at,
         })

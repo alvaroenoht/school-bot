@@ -832,7 +832,8 @@ export default function AdminApp() {
                 if (!confirm(t.confirm_delete)) return;
                 try { await api.delete(`/forms/${item.id}`); await fetchAll(); }
                 catch (e: any) { setError(e?.response?.data?.detail || 'Error al eliminar'); }
-              }} />
+              }}
+              classrooms={classrooms} />
           )}
 
           {/* Events list */}
@@ -1947,12 +1948,12 @@ function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArc
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
               </div>
-              {type === 'activity' && classrooms && item.audience_classroom_ids?.length > 0 && (
+              {(type === 'activity' || type === 'form') && classrooms && item.audience_classroom_ids?.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2">
                   {item.audience_classroom_ids.map((id: number) => {
                     const cls = classrooms.find((c: any) => c.id === id);
                     return cls ? (
-                      <span key={id} className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded-full uppercase tracking-tight">
+                      <span key={id} className={`px-2 py-0.5 text-[9px] font-black rounded-full uppercase tracking-tight ${type === 'form' ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>
                         {cls.name}
                       </span>
                     ) : null;
