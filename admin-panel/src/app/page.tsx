@@ -1251,7 +1251,7 @@ export default function AdminApp() {
                     <span className="text-white/50 text-xs font-bold">{reportData.payments?.filter((p: any) => p.status === 'confirmed').length || 0} pagos</span>
                   </div>
                 )}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button onClick={sendReminder} disabled={loading}
                     className="bg-white text-slate-900 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1.5 shadow-lg active:scale-95 transition-transform">
                     <Bell className="w-3 h-3" /> {t.remind}
