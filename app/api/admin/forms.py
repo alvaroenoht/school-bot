@@ -73,11 +73,12 @@ async def remind_incomplete(form_id: int, db: Session = Depends(get_db), admin: 
     form = db.query(models.Form).filter_by(id=form_id).first()
     if not form: raise HTTPException(status_code=404)
     
-    # 1. Target JIDs
+    # 1. Target JIDs — from KnownContactGroup (tracked contacts only)
     target_jids = set()
     for aud in form.audience:
-        parents = db.query(models.Parent).filter_by(classroom_id=aud.classroom_id).all()
-        for p in parents: target_jids.add(p.whatsapp_jid)
+        kcgs = db.query(models.KnownContactGroup).filter_by(classroom_id=aud.classroom_id, active=True).all()
+        for kcg in kcgs:
+            target_jids.add(kcg.contact_jid)
         
     # 2. Responded JIDs
     submitted_jids = {s.respondent_jid for s in form.submissions if s.status == 'submitted'}

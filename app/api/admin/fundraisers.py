@@ -142,8 +142,9 @@ async def remind_unpaid(fundraiser_id: int, db: Session = Depends(get_db), admin
 
     target_jids = set()
     for cid in (fund.audience_classroom_ids or []):
-        for p in db.query(models.Parent).filter_by(classroom_id=cid).all():
-            target_jids.add(p.whatsapp_jid)
+        kcgs = db.query(models.KnownContactGroup).filter_by(classroom_id=cid, active=True).all()
+        for kcg in kcgs:
+            target_jids.add(kcg.contact_jid)
 
     paid_jids = {p.payer_jid for p in fund.payments if p.status in ("confirmed", "pending")}
     unpaid_jids = target_jids - paid_jids
