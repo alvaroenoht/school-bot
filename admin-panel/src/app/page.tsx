@@ -783,13 +783,13 @@ export default function AdminApp() {
             <motion.div key="home" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-8">
               <div className="grid grid-cols-2 gap-4">
                 <DashCard title={t.fundraisers} icon={<Activity />} color="bg-emerald-500"
-                  count={fundraisers.length} onClick={() => goTab('fundraisers')} />
+                  count={fundraisers.length} loading={dataLoading} onClick={() => goTab('fundraisers')} />
                 <DashCard title={t.forms} icon={<LayoutList />} color="bg-indigo-500"
-                  count={forms.length} onClick={() => goTab('forms')} />
+                  count={forms.length} loading={dataLoading} onClick={() => goTab('forms')} />
                 <DashCard title={t.groups} icon={<Users />} color="bg-blue-500"
-                  count={classrooms.length} onClick={() => goTab('groups')} />
+                  count={classrooms.length} loading={dataLoading} onClick={() => goTab('groups')} />
                 <DashCard title={t.events} icon={<Calendar />} color="bg-amber-500"
-                  count={events.length} onClick={() => goTab('events')} />
+                  count={events.length} loading={dataLoading} onClick={() => goTab('events')} />
               </div>
 
               {/* Assistant — hidden for now */}
@@ -1748,12 +1748,14 @@ export default function AdminApp() {
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-function DashCard({ title, icon, color, count, onClick }: any) {
+function DashCard({ title, icon, color, count, loading, onClick }: any) {
   return (
     <div onClick={onClick} className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col justify-between active:scale-95 transition-transform cursor-pointer">
       <div className={`${color} w-12 h-12 rounded-2xl flex items-center justify-center text-white mb-4 shadow-lg shadow-slate-100`}>{icon}</div>
       <div>
-        <div className="text-xl font-black text-slate-800 leading-none mb-1">{count}</div>
+        <div className="text-xl font-black text-slate-800 leading-none mb-1">
+          {loading ? <span className="inline-block w-6 h-5 bg-slate-100 rounded animate-pulse" /> : count}
+        </div>
         <h3 className="font-bold text-slate-400 text-[10px] uppercase tracking-wider">{title}</h3>
       </div>
     </div>
