@@ -264,7 +264,7 @@ async def add_contact(
     if not kc:
         kc = db.query(models.KnownContact).filter_by(jid=req.jid).first()
     if not kc:
-        kc = models.KnownContact(jid=req.jid, phone=phone, name=req.child_name.strip())
+        kc = models.KnownContact(jid=req.jid, phone=phone, name=req.child_name.strip(), child_name=req.child_name.strip())
         db.add(kc)
         db.flush()
     # Get or create KnownContactGroup — check by phone match too
