@@ -142,17 +142,26 @@ async def list_members(
     unidentified: list[dict] = []
     for kcg in kcgs:
         kc = db.query(models.KnownContact).filter_by(jid=kcg.contact_jid).first()
-        if not kc:
-            continue
-        phone = kc.phone or kc.jid.replace("@c.us", "").replace("@lid", "")
-        entry = {
-            "id": kc.id,
-            "kcg_id": kcg.id,
-            "name": kc.name or kc.jid,
-            "jid": kc.jid,
-            "phone": phone,
-            "is_primary_payer": bool(kcg.is_primary_payer),
-        }
+        if kc:
+            phone = kc.phone or kc.jid.replace("@c.us", "").replace("@lid", "")
+            entry = {
+                "id": kc.id,
+                "kcg_id": kcg.id,
+                "name": kc.name or kc.jid,
+                "jid": kc.jid,
+                "phone": phone,
+                "is_primary_payer": bool(kcg.is_primary_payer),
+            }
+        else:
+            phone = kcg.contact_jid.replace("@c.us", "").replace("@lid", "")
+            entry = {
+                "id": None,
+                "kcg_id": kcg.id,
+                "name": kcg.contact_jid,
+                "jid": kcg.contact_jid,
+                "phone": phone,
+                "is_primary_payer": False,
+            }
         raw = (kcg.child_name or "").strip()
         if not raw:
             unidentified.append(entry)

@@ -163,6 +163,8 @@ export default function AdminApp() {
   const [editingFundraiser, setEditingFundraiser] = useState<any>(null);
   const [editName, setEditName] = useState('');
   const [editAudience, setEditAudience] = useState<number[]>([]);
+  const [editFixedAmount, setEditFixedAmount] = useState('');
+  const [editProducts, setEditProducts] = useState<Product[]>([]);
 
   // Form builder
   const [fbTitle, setFbTitle] = useState('');
@@ -303,6 +305,7 @@ export default function AdminApp() {
     setActiveTab(tab);
     setSelectedReport(null); setReportData(null);
     setSelectedGroup(null); setGroupMembers([]);
+    if (tab === 'settings') fetchSeducaGroups();
   };
 
   const selectGroup = async (g: any) => {
@@ -493,16 +496,18 @@ export default function AdminApp() {
     setEditingFundraiser(item);
     setEditName(item.name || '');
     setEditAudience(item.audience_classroom_ids || []);
+    setEditFixedAmount(item.fixed_amount || '');
+    setEditProducts(item.products?.length ? item.products : [{ name: '', price: '' }]);
   };
 
   const saveEditFundraiser = async () => {
     if (!editingFundraiser) return;
     setLoading(true);
     try {
-      await api.patch(`/fundraisers/${editingFundraiser.id}`, {
-        name: editName,
-        audience_classroom_ids: editAudience,
-      });
+      const payload: any = { name: editName, audience_classroom_ids: editAudience };
+      if (editingFundraiser.type === 'fixed') payload.fixed_amount = editFixedAmount;
+      if (editingFundraiser.type === 'variable') payload.products = editProducts.filter((p: Product) => p.name);
+      await api.patch(`/fundraisers/${editingFundraiser.id}`, payload);
       setEditingFundraiser(null);
       await fetchAll();
     } catch { setError('Error saving'); }
@@ -810,9 +815,7 @@ export default function AdminApp() {
                 if (!confirm(t.confirm_delete)) return;
                 try { await api.delete(`/fundraisers/${item.id}`); await fetchAll(); }
                 catch (e: any) { setError(e?.response?.data?.detail || 'Error al eliminar'); }
-              }}
-              onEdit={openEditFundraiser}
-              classrooms={classrooms} />
+              }} />
           )}
 
           {/* Forms list */}
@@ -1098,6 +1101,12 @@ export default function AdminApp() {
                     className="bg-white/15 px-4 py-2.5 rounded-2xl text-white text-[10px] font-black uppercase">
                     {(reportData?.status || selectedReport.status) === 'active' ? t.close : t.reopen}
                   </button>
+                  {selectedReport.type === 'fundraiser' && (reportData?.status || selectedReport.status) === 'active' && (
+                    <button onClick={() => openEditFundraiser(selectedReport)}
+                      className="bg-white/15 px-3 py-2.5 rounded-2xl text-white text-[10px] font-black uppercase flex items-center gap-1">
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
                   {reportData != null &&
                    (reportData.payments?.length === 0 || reportData.submissions?.length === 0) && (
                     <button onClick={deleteReport} disabled={loading}
@@ -1331,6 +1340,33 @@ export default function AdminApp() {
             <div className="space-y-5">
               <FlatInput label={t.fund_name} icon={<Tag className="w-4 h-4" />}
                 value={editName} onChange={setEditName} />
+              {editingFundraiser?.type === 'fixed' && (
+                <FlatInput label={t.fund_amount} icon={<DollarSign className="w-4 h-4" />}
+                  value={editFixedAmount} onChange={setEditFixedAmount} type="number" />
+              )}
+              {editingFundraiser?.type === 'variable' && (
+                <div className="space-y-2">
+                  <label className="label-sm">{t.add_product}</label>
+                  <div className="space-y-2">
+                    {editProducts.map((p: Product, i: number) => (
+                      <div key={i} className="flex gap-2">
+                        <input placeholder={t.product_name} value={p.name}
+                          onChange={e => { const a = [...editProducts]; a[i] = { ...a[i], name: e.target.value }; setEditProducts(a); }}
+                          className="flex-1 px-3 py-3 bg-slate-50 rounded-xl font-bold text-sm outline-none border-none" />
+                        <input placeholder="$" value={p.price} type="number"
+                          onChange={e => { const a = [...editProducts]; a[i] = { ...a[i], price: e.target.value }; setEditProducts(a); }}
+                          className="w-20 px-3 py-3 bg-slate-50 rounded-xl font-bold text-sm outline-none border-none" />
+                        {editProducts.length > 1 && (
+                          <button onClick={() => setEditProducts(editProducts.filter((_: Product, j: number) => j !== i))}
+                            className="text-slate-300"><X className="w-4 h-4" /></button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => setEditProducts([...editProducts, { name: '', price: '' }])}
+                    className="text-indigo-600 text-xs font-black uppercase">+ {t.add_product}</button>
+                </div>
+              )}
               <AudiencePicker label={t.audience} classrooms={classrooms} selected={editAudience}
                 onToggle={(id: number) => toggleAudience(id, editAudience, setEditAudience)} />
               <button onClick={saveEditFundraiser} disabled={loading || !editName.trim()}
@@ -1909,12 +1945,6 @@ function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArc
                     <div className="text-[10px] font-bold text-slate-400">{paid}/{total}</div>
                   )}
                 </div>
-                {onEdit && type === 'activity' && !isArchived && (
-                  <button onClick={e => { e.stopPropagation(); onEdit(item); }}
-                    className="p-1.5 rounded-xl bg-slate-50 text-slate-400 flex-shrink-0">
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                )}
                 <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
               </div>
               {type === 'activity' && classrooms && item.audience_classroom_ids?.length > 0 && (

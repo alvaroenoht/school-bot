@@ -30,6 +30,8 @@ class FundraiserUpdate(BaseModel):
     status: Optional[str] = None  # active | closed | archived
     name: Optional[str] = None
     audience_classroom_ids: Optional[List[int]] = None
+    fixed_amount: Optional[str] = None
+    products: Optional[List[ProductSchema]] = None
 
 
 def _generate_code(name: str, db: Session) -> str:
@@ -96,6 +98,7 @@ def _fund_stats(fund: models.Fundraiser, db: Session) -> dict:
         "created_at": fund.created_at,
         "closed_at": fund.closed_at,
         "audience_classroom_ids": fund.audience_classroom_ids or [],
+        "products": [{"id": p.id, "name": p.name, "price": str(p.price)} for p in fund.products],
     }
 
 
@@ -294,6 +297,12 @@ async def update_fundraiser(fundraiser_id: int, req: FundraiserUpdate, db: Sessi
         fund.friendly_name = req.name
     if req.audience_classroom_ids is not None:
         fund.audience_classroom_ids = req.audience_classroom_ids
+    if req.fixed_amount is not None:
+        fund.fixed_amount = req.fixed_amount
+    if req.products is not None:
+        db.query(models.FundraiserProduct).filter_by(fundraiser_id=fund.id).delete()
+        for idx, p in enumerate(req.products):
+            db.add(models.FundraiserProduct(fundraiser_id=fund.id, name=p.name, price=p.price, sort_order=idx))
 
     db.commit()
     return {"status": "updated"}
