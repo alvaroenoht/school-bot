@@ -116,11 +116,16 @@ async def list_forms(
     result = []
     for f in forms:
         audience_ids = [a.classroom_id for a in db.query(models.FormAudience).filter_by(form_id=f.id).all()]
-        audience_count = (
-            db.query(models.Parent)
-            .filter(models.Parent.classroom_id.in_(audience_ids), models.Parent.is_active == True)
-            .count() if audience_ids else 0
-        )
+        if audience_ids:
+            kcgs = db.query(models.KnownContactGroup).filter(
+                models.KnownContactGroup.classroom_id.in_(audience_ids),
+                models.KnownContactGroup.active == True,
+            ).all()
+            child_names = {(kcg.child_name or "").lower().strip() for kcg in kcgs if kcg.child_name}
+            unnamed = sum(1 for kcg in kcgs if not kcg.child_name)
+            audience_count = len(child_names) + unnamed
+        else:
+            audience_count = 0
         submitted = db.query(models.FormSubmission).filter_by(form_id=f.id, status="submitted").count()
         result.append({
             "id": f.id, "title": f.title, "purpose": f.purpose, "status": f.status,

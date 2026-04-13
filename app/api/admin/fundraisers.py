@@ -95,6 +95,7 @@ def _fund_stats(fund: models.Fundraiser, db: Session) -> dict:
         "completion_pct": completion_pct,
         "created_at": fund.created_at,
         "closed_at": fund.closed_at,
+        "audience_classroom_ids": fund.audience_classroom_ids or [],
     }
 
 

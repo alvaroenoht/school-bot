@@ -5,7 +5,7 @@ import {
   Lock, MessageSquare, Plus, Activity, LayoutList, Users, Calendar,
   ChevronRight, Settings, LogOut, X, Tag, FileText, CalendarPlus,
   ChevronLeft, Filter, Edit2, User, CreditCard, Check, Trash2,
-  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2
+  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2, Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import api from '@/lib/api';
@@ -158,6 +158,11 @@ export default function AdminApp() {
   const [fAccountId, setFAccountId] = useState('');
   const [fAudience, setFAudience] = useState<number[]>([]);
   const [fProducts, setFProducts] = useState<Product[]>([{ name: '', price: '' }]);
+
+  // Fundraiser edit
+  const [editingFundraiser, setEditingFundraiser] = useState<any>(null);
+  const [editName, setEditName] = useState('');
+  const [editAudience, setEditAudience] = useState<number[]>([]);
 
   // Form builder
   const [fbTitle, setFbTitle] = useState('');
@@ -483,6 +488,27 @@ export default function AdminApp() {
     finally { setLoading(false); }
   };
 
+  // ── Edit fundraiser ───────────────────────────────────────────────────────
+  const openEditFundraiser = (item: any) => {
+    setEditingFundraiser(item);
+    setEditName(item.name || '');
+    setEditAudience(item.audience_classroom_ids || []);
+  };
+
+  const saveEditFundraiser = async () => {
+    if (!editingFundraiser) return;
+    setLoading(true);
+    try {
+      await api.patch(`/fundraisers/${editingFundraiser.id}`, {
+        name: editName,
+        audience_classroom_ids: editAudience,
+      });
+      setEditingFundraiser(null);
+      await fetchAll();
+    } catch { setError('Error saving'); }
+    finally { setLoading(false); }
+  };
+
   // ── Create handlers ───────────────────────────────────────────────────────
   const createFundraiser = async () => {
     if (!fName.trim()) return;
@@ -784,7 +810,9 @@ export default function AdminApp() {
                 if (!confirm(t.confirm_delete)) return;
                 try { await api.delete(`/fundraisers/${item.id}`); await fetchAll(); }
                 catch (e: any) { setError(e?.response?.data?.detail || 'Error al eliminar'); }
-              }} />
+              }}
+              onEdit={openEditFundraiser}
+              classrooms={classrooms} />
           )}
 
           {/* Forms list */}
@@ -1296,6 +1324,24 @@ export default function AdminApp() {
         )}
       </AnimatePresence>
 
+      {/* ── Edit Fundraiser Modal ────────────────────────────────────────── */}
+      <AnimatePresence>
+        {editingFundraiser && (
+          <Modal title="Editar actividad" onClose={() => setEditingFundraiser(null)}>
+            <div className="space-y-5">
+              <FlatInput label={t.fund_name} icon={<Tag className="w-4 h-4" />}
+                value={editName} onChange={setEditName} />
+              <AudiencePicker label={t.audience} classrooms={classrooms} selected={editAudience}
+                onToggle={(id: number) => toggleAudience(id, editAudience, setEditAudience)} />
+              <button onClick={saveEditFundraiser} disabled={loading || !editName.trim()}
+                className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
+                {loading ? '...' : 'Guardar'}
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
       {/* ── New Form Modal ────────────────────────────────────────────────── */}
       <AnimatePresence>
         {showNewForm && (
@@ -1794,7 +1840,7 @@ function SwipeableCard({ children, onClose, onDelete }: { children: React.ReactN
   );
 }
 
-function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArchived, onToggleArchived, seeAllLabel, showActiveLabel, onClose, onDelete }: any) {
+function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArchived, onToggleArchived, seeAllLabel, showActiveLabel, onClose, onDelete, onEdit, classrooms }: any) {
   const accentColors: any = { activity: 'bg-emerald-500', form: 'bg-indigo-500', group: 'bg-blue-500' };
   const barColors: any = { activity: 'bg-emerald-400', form: 'bg-indigo-400' };
 
@@ -1861,8 +1907,26 @@ function ListView({ title, items, type, noItemsLabel, loading, onSelect, showArc
                     <div className="text-[10px] font-bold text-slate-400">{paid}/{total}</div>
                   )}
                 </div>
+                {onEdit && type === 'activity' && !isArchived && (
+                  <button onClick={e => { e.stopPropagation(); onEdit(item); }}
+                    className="p-1.5 rounded-xl bg-slate-50 text-slate-400 flex-shrink-0">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
               </div>
+              {type === 'activity' && classrooms && item.audience_classroom_ids?.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {item.audience_classroom_ids.map((id: number) => {
+                    const cls = classrooms.find((c: any) => c.id === id);
+                    return cls ? (
+                      <span key={id} className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded-full uppercase tracking-tight">
+                        {cls.name}
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+              )}
               {pct !== null && (
                 <div className="space-y-1">
                   <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
