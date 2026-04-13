@@ -553,6 +553,34 @@ async def start_from_code(raw_jid: str, chat_id: str, code: str, db: Session, ad
 
     # Admin override: skip all audience checks
     if admin_override:
+        # Ensure KnownContact exists (auto-create from KCG if missing)
+        kc = db.query(models.KnownContact).filter_by(jid=raw_jid).first()
+        if not kc:
+            # Try to find by phone
+            phone = chat_id.replace("@c.us", "") if "@c.us" in chat_id else None
+            if phone:
+                kc = db.query(models.KnownContact).filter_by(phone=phone).first()
+            if not kc and phone:
+                kc = models.KnownContact(jid=raw_jid, phone=phone, name=phone, child_name=phone)
+                db.add(kc)
+                db.flush()
+                # Link to first audience classroom
+                audience_rows = db.query(models.FormAudience).filter_by(form_id=form.id).all()
+                for aud in audience_rows:
+                    cls = db.query(models.Classroom).get(aud.classroom_id)
+                    if not cls:
+                        continue
+                    existing_kcg = db.query(models.KnownContactGroup).filter_by(
+                        contact_jid=raw_jid, classroom_id=cls.id
+                    ).first()
+                    if not existing_kcg:
+                        db.add(models.KnownContactGroup(
+                            contact_jid=raw_jid, classroom_id=cls.id,
+                            active=True, synced_at=datetime.utcnow(),
+                        ))
+                db.commit()
+                logger.info("FORM auto-created KnownContact jid=%s phone=%s", raw_jid, phone)
+
         existing = db.query(models.ConversationSession).filter_by(chat_jid=raw_jid).first()
         if existing:
             if existing.flow == "form_respond" and (existing.data or {}).get("form_id") == form.id:

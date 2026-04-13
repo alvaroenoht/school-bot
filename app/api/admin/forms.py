@@ -118,12 +118,21 @@ async def start_form_for_all(form_id: int, db: Session = Depends(get_db), admin:
     pending_jids = target_jids - submitted_jids - active_session_jids
 
     started = 0
+    skipped = 0
     for jid in pending_jids:
-        # Resolve chat_id (use same JID for DM)
-        await start_from_code(jid, jid, form.form_code, db, admin_override=True)
+        # Resolve @lid → phone@c.us for sending
+        chat_id = jid
+        if "@lid" in jid:
+            kc = db.query(models.KnownContact).filter_by(jid=jid).first()
+            if kc and kc.phone:
+                chat_id = kc.phone + "@c.us"
+            else:
+                skipped += 1
+                continue
+        await start_from_code(jid, chat_id, form.form_code, db, admin_override=True)
         started += 1
 
-    return {"started": started, "total_audience": len(target_jids), "already_submitted": len(submitted_jids)}
+    return {"started": started, "skipped": skipped, "total_audience": len(target_jids), "already_submitted": len(submitted_jids)}
 
 @router.get("")
 async def list_forms(
