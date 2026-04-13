@@ -441,6 +441,17 @@ def _resolve_payer_info(payer, db: Session, audience_classroom_ids: list[int] | 
         if audience_classroom_ids:
             q = q.filter(models.KnownContactGroup.classroom_id.in_(audience_classroom_ids))
         kcgs = q.all()
+        # If no KCGs found, try resolving via phone (handles @lid vs @c.us mismatch)
+        if not kcgs and payer.phone:
+            alt_kc = db.query(models.KnownContact).filter(
+                models.KnownContact.phone == payer.phone,
+                models.KnownContact.jid != payer.jid,
+            ).first()
+            if alt_kc:
+                q2 = db.query(models.KnownContactGroup).filter_by(contact_jid=alt_kc.jid, active=True)
+                if audience_classroom_ids:
+                    q2 = q2.filter(models.KnownContactGroup.classroom_id.in_(audience_classroom_ids))
+                kcgs = q2.all()
         seen = set()
         children = []
         for kcg in kcgs:

@@ -378,6 +378,8 @@ async def whatsapp_webhook(request: Request):
 
         # 6. Known contact \u2014 code, "pay/pagar", or brief help
         contact = db.query(models.KnownContact).filter_by(jid=raw_jid).first()
+        if not contact and from_phone:
+            contact = db.query(models.KnownContact).filter_by(phone=from_phone).first()
         if contact:
             if _is_bare_pay(raw_text):
                 await payment_flow.show_pending(raw_jid, chat_id, db, contact)
