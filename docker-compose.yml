@@ -41,7 +41,7 @@ services:
   # ── WhatsApp gateway (waha) ───────────────────────────────────────────────────
   # Docs: https://waha.devlike.pro
   waha:
-    image: devlikeapro/waha:latest
+    image: devlikeapro/waha:noweb
     container_name: waha
     restart: unless-stopped
     ports:
@@ -49,7 +49,7 @@ services:
     volumes:
       - waha-sessions:/app/.sessions
     environment:
-      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+      - WHATSAPP_DEFAULT_ENGINE=NOWEB
       - WAHA_DASHBOARD_USERNAME=admin
       - WAHA_DASHBOARD_PASSWORD=schoolbot123
       - WAHA_API_KEY=schoolbot123
