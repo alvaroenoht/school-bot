@@ -770,25 +770,7 @@ async def _finalize_payment(
         "\u00a1Gracias por tu pago!",
     )
 
-    # Notify admin silently
-    try:
-        from app.config import get_settings
-        settings = get_settings()
-        admin_jid = settings.admin_phone  # We'll resolve this to a chat_id
-        flag_note = " \u26a0\ufe0f *REQUIERE REVISI\u00d3N*" if flagged else ""
-        wa.send_text(
-            f"{settings.admin_phone}@c.us",
-            f"\U0001f4b3 Nuevo pago recibido{flag_note}\n\n"
-            f"  \u2022 Actividad: *{fundraiser.name}*\n"
-            f"  \u2022 Padre: {data.get('payer_name', '?')}\n"
-            f"  \u2022 Estudiante: {data.get('child_name', '?')}\n"
-            f"  \u2022 Monto: ${data.get('ocr_amount', '?')}\n"
-            f"  \u2022 C\u00f3digo: {data.get('confirmation_code', 'N/A')}",
-        )
-    except Exception as e:
-        logger.warning(f"Could not notify admin of payment: {e}")
-
-    # Notify additional subscribers
+    # Notify additional subscribers (admin notification removed — use admin panel instead)
     try:
         subscribers = db.query(models.FundraiserSubscriber).filter_by(fundraiser_id=fundraiser.id).all()
         for s in subscribers:
