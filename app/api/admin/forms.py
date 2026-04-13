@@ -183,6 +183,25 @@ async def list_forms(
         })
     return result
 
+@router.get("/{form_id}/excel")
+async def download_excel(form_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.utils.form_report import _build_form_excel
+    form = db.query(models.Form).filter_by(id=form_id).first()
+    if not form: raise HTTPException(status_code=404)
+    subs = db.query(models.FormSubmission).filter_by(form_id=form_id, status="submitted").count()
+    if not subs:
+        raise HTTPException(status_code=400, detail="No submissions to export")
+    content = _build_form_excel(form, db)
+    filename = f"{form.form_code}_{form.title[:30].replace(' ', '_')}.xlsx"
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{form_id}/report")
 async def get_report(form_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
     form = db.query(models.Form).filter_by(id=form_id).first()

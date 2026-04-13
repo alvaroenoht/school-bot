@@ -181,6 +181,25 @@ async def list_fundraisers(
     return [_fund_stats(f, db) for f in funds]
 
 
+@router.get("/{fundraiser_id}/excel")
+async def download_excel(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.utils.fundraiser_report import _build_excel
+    fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
+    if not fund: raise HTTPException(status_code=404)
+    payments = db.query(models.Payment).filter_by(fundraiser_id=fundraiser_id, status="confirmed").all()
+    if not payments:
+        raise HTTPException(status_code=400, detail="No confirmed payments to export")
+    content = _build_excel(fund, payments, db)
+    filename = f"{fund.code}_{fund.name[:30].replace(' ', '_')}.xlsx"
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{fundraiser_id}/report")
 async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
     fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()

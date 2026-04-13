@@ -77,13 +77,11 @@ _STATUS_ICONS = {"draft": "📝", "open": "✅", "closed": "🔒", "archived": "
 
 # ── Excel export ───────────────────────────────────────────────────────────────
 
-def _generate_excel_url(form: models.Form, db: Session) -> str:
-    """Build Excel workbook from all submissions, upload to S3, return shortened URL."""
+def _build_form_excel(form: models.Form, db: Session) -> bytes:
+    """Build Excel workbook bytes from all submissions."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
-    from app.utils.s3_upload import upload_file_to_s3, generate_presigned_url
-    from app.utils.helpers import shorten_url
 
     questions = (
         db.query(models.FormQuestion)
@@ -100,7 +98,6 @@ def _generate_excel_url(form: models.Form, db: Session) -> str:
     header_fill = PatternFill("solid", fgColor="1F4E79")
     header_font = Font(color="FFFFFF", bold=True)
 
-    # Header row
     headers = ["Padre/Madre", "Estudiante", "Estado", "Enviado", "Iniciado"]
     for q in questions:
         headers.append(q.text[:60].replace("\n", " "))
@@ -111,7 +108,6 @@ def _generate_excel_url(form: models.Form, db: Session) -> str:
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center")
 
-    # One row per submission
     for sub in submissions:
         answers_map = {
             a.question_id: a.value
@@ -134,14 +130,21 @@ def _generate_excel_url(form: models.Form, db: Session) -> str:
             row.append(val or "")
         ws.append(row)
 
-    # Auto-fit columns
     for col in ws.columns:
         max_len = max((len(str(cell.value or "")) for cell in col), default=8)
         ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 50)
 
     buf = io.BytesIO()
     wb.save(buf)
-    content = buf.getvalue()
+    return buf.getvalue()
+
+
+def _generate_excel_url(form: models.Form, db: Session) -> str:
+    """Build Excel, upload to S3, return shortened presigned URL."""
+    from app.utils.s3_upload import upload_file_to_s3, generate_presigned_url
+    from app.utils.helpers import shorten_url
+
+    content = _build_form_excel(form, db)
 
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
         f.write(content)

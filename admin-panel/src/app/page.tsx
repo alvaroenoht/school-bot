@@ -5,7 +5,7 @@ import {
   Lock, MessageSquare, Plus, Activity, LayoutList, Users, Calendar,
   ChevronRight, Settings, LogOut, X, Tag, FileText, CalendarPlus,
   ChevronLeft, Filter, Edit2, User, CreditCard, Check, Trash2,
-  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2, Pencil
+  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2, Pencil, Download
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import api from '@/lib/api';
@@ -457,6 +457,28 @@ export default function AdminApp() {
       await api.post(path); alert(t.reminder_sent);
     } catch { setError('Failed'); }
     finally { setLoading(false); }
+  };
+
+  const downloadExcel = async () => {
+    if (!selectedReport) return;
+    setLoading(true);
+    try {
+      const path = selectedReport.type === 'fundraiser'
+        ? `/fundraisers/${selectedReport.id}/excel`
+        : `/forms/${selectedReport.id}/excel`;
+      const r = await api.get(path, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([r.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      const name = selectedReport.name || selectedReport.title || 'report';
+      a.download = `${name.replace(/\s+/g, '_').substring(0, 30)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e?.response?.status === 400 ? 'No data to export' : 'Download failed');
+    } finally { setLoading(false); }
   };
 
   const toggleReportStatus = async () => {
@@ -1233,6 +1255,10 @@ export default function AdminApp() {
                   <button onClick={sendReminder} disabled={loading}
                     className="bg-white text-slate-900 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1.5 shadow-lg active:scale-95 transition-transform">
                     <Bell className="w-3 h-3" /> {t.remind}
+                  </button>
+                  <button onClick={downloadExcel} disabled={loading}
+                    className="bg-white text-slate-900 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1.5 shadow-lg active:scale-95 transition-transform">
+                    <Download className="w-3 h-3" /> Excel
                   </button>
                   <button onClick={toggleReportStatus} disabled={loading}
                     className="bg-white/15 px-4 py-2.5 rounded-2xl text-white text-[10px] font-black uppercase">
