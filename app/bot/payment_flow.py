@@ -816,6 +816,16 @@ def _advance(session: models.ConversationSession, step: str, data: dict, db: Ses
 def _detect_struggle(session: models.ConversationSession, text: str, data: dict) -> str | None:
     """Detect parent struggling with the payment flow. Returns struggle reason or None."""
     history = data.get("_input_history", [])
+    step = session.step
+    txt = text.lower().strip()
+
+    # ── Skip struggle detection for valid inputs at the current step ──
+    if step == "confirming_order" and txt in ("si", "sí", "yes", "confirmar", "no", "cambiar", "editar"):
+        return None
+    if step == "awaiting_receipt":
+        return None  # any input here (image or text) should reach the handler
+    if step == "awaiting_confirmation" and txt in ("si", "sí", "yes", "confirmar", "no"):
+        return None
 
     # 1. Repeated "No entendí" — bot sent this when order parse failed
     no_entendi_count = data.get("_no_entendi_count", 0)
@@ -827,20 +837,20 @@ def _detect_struggle(session: models.ConversationSession, text: str, data: dict)
         return "repeated_input"
 
     # 3. Long natural language when expecting si/no or numeric
-    expects_short = session.step in ("awaiting_confirmation", "confirming_order")
+    expects_short = step in ("awaiting_confirmation", "confirming_order")
     if expects_short and len(text.split()) > 8:
         return "verbose_when_short_expected"
 
     # 4. Session stuck > 5 min on same step
     if session.updated_at:
         elapsed = (datetime.utcnow() - session.updated_at).total_seconds()
-        same_step = data.get("_last_step") == session.step
+        same_step = data.get("_last_step") == step
         if elapsed > 300 and same_step:
             return "stuck_timeout"
 
     # 5. User says No twice after order confirmation
     no_count = data.get("_no_count", 0)
-    if session.step == "confirming_order" and no_count >= 2:
+    if step == "confirming_order" and no_count >= 2:
         return "repeated_rejection"
 
     return None
@@ -880,8 +890,12 @@ async def _escalate_to_agent(
 
     action = await handle_payment_assist(chat_id, text, context)
 
+    # Clear history after escalation so next input isn't flagged as repeated
+    data["_input_history"] = []
+
     if action is None:
         # Fallback: just nudge gently
+        _advance(session, session.step, data, db)  # persist cleared history
         wa.send_text(chat_id, "¿Necesitas ayuda? Escribe *cancelar* para salir o *pagar* para reintentar.")
         return
 
