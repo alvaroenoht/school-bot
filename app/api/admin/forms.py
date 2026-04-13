@@ -207,9 +207,27 @@ async def get_report(form_id: int, db: Session = Depends(get_db), admin: dict = 
     form = db.query(models.Form).filter_by(id=form_id).first()
     if not form: raise HTTPException(status_code=404)
     subs = db.query(models.FormSubmission).filter_by(form_id=form_id).all()
+
+    def _resolve_student(s):
+        if s.student:
+            return s.student.name
+        # Fall back to KCG child_name
+        if s.respondent_jid:
+            kc = db.query(models.KnownContact).filter_by(jid=s.respondent_jid).first()
+            if not kc and s.respondent_jid:
+                phone = s.respondent_jid.replace("@c.us", "").replace("@lid", "")
+                kc = db.query(models.KnownContact).filter_by(phone=phone).first()
+            if kc:
+                kcg = db.query(models.KnownContactGroup).filter_by(
+                    contact_jid=kc.jid, active=True
+                ).filter(models.KnownContactGroup.child_name.isnot(None)).first()
+                if kcg:
+                    return kcg.child_name
+        return None
+
     return {
         "id": form.id, "title": form.title, "status": form.status,
-        "submissions": [{"id": s.id, "parent": s.respondent_name, "student": s.student.name if s.student else "N/A", "date": s.submitted_at, "status": s.status} for s in subs]
+        "submissions": [{"id": s.id, "parent": s.respondent_name, "student": _resolve_student(s), "date": s.submitted_at, "status": s.status} for s in subs]
     }
 
 @router.get("/{form_id}/submissions/{submission_id}")
