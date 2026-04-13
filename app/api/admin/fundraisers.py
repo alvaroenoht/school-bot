@@ -149,7 +149,7 @@ async def remind_unpaid(fundraiser_id: int, db: Session = Depends(get_db), admin
     paid_jids = {p.payer_jid for p in fund.payments if p.status in ("confirmed", "pending")}
     unpaid_jids = target_jids - paid_jids
 
-    msg = f"🔔 *Recordatorio: {fund.name}*\n\nAún no recibimos tu pago. Si ya lo hiciste, envía tu comprobante escribiendo *pagar*."
+    msg = f"🔔 *Recordatorio: {fund.name}*\n\nAún no recibimos tu pago.\n\nPara pagar, responde con el código:\n*{fund.code}*"
     for jid in unpaid_jids:
         wa.send_text(jid, msg)
 

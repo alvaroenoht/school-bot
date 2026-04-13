@@ -85,7 +85,7 @@ async def remind_incomplete(form_id: int, db: Session = Depends(get_db), admin: 
     unanswered_jids = target_jids - submitted_jids
     
     # 3. Notify
-    msg = f"🔔 *Recordatorio: {form.title}*\n\nAún no hemos recibido tu respuesta. Por favor complétalo respondiendo *formulario* a este chat."
+    msg = f"🔔 *Recordatorio: {form.title}*\n\nAún no hemos recibido tu respuesta.\n\nPara completarlo, responde con el código:\n*{form.form_code}*"
     for jid in unanswered_jids:
         wa.send_text(jid, msg)
         
