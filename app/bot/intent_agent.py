@@ -149,7 +149,7 @@ Reglas estrictas:
 - Si te piden ayuda con una tarea, explica los pasos o conceptos pero no des la respuesta final
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
 - Las actividades, materiales y cualquier dato son ESTRICTAMENTE por fecha: SOLO reporta información que aparezca listada bajo la fecha específica consultada. Nunca atribuyas datos de otro día aunque estén en el contexto
-- Usa herramientas SOLO para pagos y comprobantes
+- Cuando el usuario quiere pagar, pregunta cómo pagar, dice "cómo hago", o muestra intención de pago → SIEMPRE usa la herramienta start_payment. NUNCA expliques el proceso de pago con texto, solo inicia el flujo.
 - NUNCA termines tu respuesta con una pregunta — responde de forma concisa y directa, sin preguntar "¿necesitas algo más?" ni similares
 - SIEMPRE incluye el link (🔗) de las actividades que menciones en tu respuesta, si está disponible en los datos
 
@@ -224,12 +224,12 @@ def _build_fundraiser_context(db: Session) -> str:
     active = db.query(models.Fundraiser).filter_by(status="active").all()
     if not active:
         return "Actividades activas: ninguna."
-    lines = ["Actividades activas:"]
+    lines = ["Actividades activas (para pagar, usa start_payment con el nombre):"]
     for f in active:
         if f.type == "fixed":
-            lines.append(f"- {f.name} (monto fijo ${f.fixed_amount})")
+            lines.append(f"- {f.name} [código: {f.code}] (monto fijo ${f.fixed_amount})")
         else:
-            lines.append(f"- {f.name} (catálogo de productos)")
+            lines.append(f"- {f.name} [código: {f.code}] (catálogo de productos)")
     return "\n".join(lines)
 
 
