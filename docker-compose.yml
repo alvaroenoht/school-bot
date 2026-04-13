@@ -41,7 +41,7 @@ services:
   # ── WhatsApp gateway (waha) ───────────────────────────────────────────────────
   # Docs: https://waha.devlike.pro
   waha:
-    image: devlikeapro/waha:latest
+    image: devlikeapro/waha:latest-2026.1.5
     container_name: waha
     restart: unless-stopped
     ports:
