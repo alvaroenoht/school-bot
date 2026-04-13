@@ -150,8 +150,8 @@ class WahaClient:
 
     def join_group_via_link(self, invite_link: str) -> dict | None:
         """Join a WhatsApp group using an invite link (chat.whatsapp.com/...)."""
-        # Extract the invite code from the link
-        code = invite_link.split("/")[-1].strip()
+        # Extract the invite code from the link (strip query params)
+        code = invite_link.split("/")[-1].split("?")[0].strip()
         url = f"{self.base_url}/api/{self.session}/groups/join"
         try:
             r = requests.post(url, json={"code": code}, headers=self.headers, timeout=20)
