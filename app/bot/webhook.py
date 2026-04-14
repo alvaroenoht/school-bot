@@ -87,7 +87,9 @@ def _resolve_code(text: str, db) -> tuple[str, object] | None:
     """Try to match text as a fundraiser code or form code.
     Returns ("fundraiser", obj) or ("form", obj) or None.
     """
-    code = text.strip()
+    # Strip WA markdown (bold/italic/strike/mono) that users include when
+    # copy-pasting formatted codes from bot or admin messages.
+    code = text.strip().strip("*_~`").strip()
     if not code or len(code) > 20:
         return None
     # Fundraiser code (exact, case-insensitive)
