@@ -39,12 +39,31 @@ def _score(a: str, b: str) -> float:
     return SequenceMatcher(None, _norm(a), _norm(b)).ratio()
 
 
+def _tokens(s: str) -> set[str]:
+    return {t for t in _norm(s).split() if len(t) >= 3}
+
+
 def _best_match(name: str, candidates: list[str]) -> tuple[str | None, float]:
+    ical_toks = _tokens(name)
+    # 1) Prefer candidate whose tokens are a subset of ical tokens (KCG short → iCal full)
+    best_subset, best_overlap = None, 0
+    for c in candidates:
+        ctoks = _tokens(c)
+        if ctoks and ctoks.issubset(ical_toks) and len(ctoks) > best_overlap:
+            best_subset, best_overlap = c, len(ctoks)
+    if best_subset and best_overlap >= 2:
+        return best_subset, 0.99
+    # 2) Fallback: highest overlap ratio
     best, best_score = None, 0.0
     for c in candidates:
-        s = _score(name, c)
-        if s > best_score:
-            best, best_score = c, s
+        ctoks = _tokens(c)
+        if not ctoks:
+            continue
+        overlap = len(ctoks & ical_toks)
+        ratio = overlap / max(len(ctoks), len(ical_toks))
+        blended = max(ratio, _score(name, c))
+        if blended > best_score:
+            best, best_score = c, blended
     return best, best_score
 
 
