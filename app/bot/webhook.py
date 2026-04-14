@@ -114,14 +114,16 @@ async def whatsapp_webhook(request: Request):
     body = await request.json()
     settings = get_settings()
 
+    _body_preview = (body.get("payload", {}).get("body") or "")[:80]
     logger.info(
-        "WEBHOOK event=%s from=%s to=%s type=%s hasMedia=%s bodyLen=%s",
+        "WEBHOOK event=%s from=%s to=%s type=%s hasMedia=%s bodyLen=%s body=%r",
         body.get("event"),
         body.get("payload", {}).get("participant") or body.get("payload", {}).get("from"),
         body.get("payload", {}).get("to"),
         body.get("payload", {}).get("type"),
         body.get("payload", {}).get("hasMedia"),
         len(body.get("payload", {}).get("body") or ""),
+        _body_preview,
     )
 
     if body.get("event") != "message":
