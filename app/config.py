@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     # ── OpenAI ────────────────────────────────────────────────────────────────
     openai_api_key: str
     openai_model: str = "gpt-4o-mini"
+    # Dedicated, more capable model for the parent-facing intent agent.
+    # Nano-tier models are unreliable at multi-tool disambiguation under a
+    # long system prompt, so intent_agent uses this instead of openai_model.
+    openai_intent_model: str = "gpt-4o-mini"
 
     # ── Waha (WhatsApp gateway) ───────────────────────────────────────────────
     waha_url: str = "http://waha:3000"
