@@ -19,6 +19,13 @@ class StudentUpdate(BaseModel):
     birth_date: Optional[date] = None
 
 
+class StudentCreate(BaseModel):
+    name: str
+    classroom_id: int
+    grade: Optional[str] = None
+    birth_date: Optional[date] = None
+
+
 def _serialize(s: models.Student) -> dict:
     return {
         "id": s.id,
@@ -42,6 +49,50 @@ async def list_students(
     if classroom_id is not None:
         q = q.filter(models.Student.classroom_id == classroom_id)
     return [_serialize(s) for s in q.order_by(models.Student.name).all()]
+
+
+@router.post("")
+async def create_student(
+    req: StudentCreate,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    """Create a Student row. Used by member edit modal to enable bday
+    editing in classrooms where the Student table wasn't populated by
+    Seduca sync (fallback: KCG child_name becomes Student.name)."""
+    require_write_access(admin)
+    if not admin["is_super_admin"]:
+        my_write = {r["classroom_id"] for r in admin["roles"] if r["role"] != "soporte"}
+        if req.classroom_id not in my_write:
+            raise HTTPException(status_code=403, detail="Not authorized for this classroom")
+
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+
+    # Dedupe by case-insensitive name within classroom
+    existing = (
+        db.query(models.Student)
+        .filter(models.Student.classroom_id == req.classroom_id)
+        .filter(models.Student.name.ilike(name))
+        .first()
+    )
+    if existing:
+        if req.birth_date is not None:
+            existing.birth_date = req.birth_date
+        db.commit()
+        return _serialize(existing)
+
+    classroom = db.query(models.Classroom).filter_by(id=req.classroom_id).first()
+    s = models.Student(
+        name=name,
+        grade=req.grade or (classroom.name if classroom else None),
+        classroom_id=req.classroom_id,
+        birth_date=req.birth_date,
+    )
+    db.add(s)
+    db.commit()
+    return _serialize(s)
 
 
 @router.patch("/{student_id}")

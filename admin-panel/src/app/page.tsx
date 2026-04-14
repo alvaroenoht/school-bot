@@ -526,12 +526,24 @@ export default function AdminApp() {
           is_primary_payer: p.is_primary_payer,
         })
       );
-      if (editingMember.student_id && editBirthDate !== (editingMember.birth_date || '')) {
-        updates.push(
-          api.patch(`/students/${editingMember.student_id}`, {
-            birth_date: editBirthDate || null,
-          })
-        );
+      if (editBirthDate !== (editingMember.birth_date || '')) {
+        const finalName = editChildName.trim() || editingMember.child_name;
+        if (editingMember.student_id) {
+          updates.push(
+            api.patch(`/students/${editingMember.student_id}`, {
+              birth_date: editBirthDate || null,
+            })
+          );
+        } else if (editBirthDate) {
+          // Auto-create Student row for classrooms not populated by Seduca sync
+          updates.push(
+            api.post(`/students`, {
+              name: finalName,
+              classroom_id: selectedGroup.id,
+              birth_date: editBirthDate,
+            })
+          );
+        }
       }
       await Promise.all(updates);
       setEditingMember(null);
@@ -1795,14 +1807,8 @@ export default function AdminApp() {
             <div className="space-y-5">
               <FlatInput label={t.student_name} icon={<User className="w-4 h-4" />}
                 value={editChildName} onChange={setEditChildName} />
-              {editingMember.student_id ? (
-                <FlatInput label="Cumpleaños 🎂" icon={<Calendar className="w-4 h-4" />}
-                  value={editBirthDate} onChange={setEditBirthDate} type="date" />
-              ) : (
-                <div className="text-[10px] font-bold text-slate-400 px-1">
-                  Cumpleaños no editable — el nombre no coincide con un estudiante sincronizado.
-                </div>
-              )}
+              <FlatInput label="Cumpleaños 🎂" icon={<Calendar className="w-4 h-4" />}
+                value={editBirthDate} onChange={setEditBirthDate} type="date" />
               {editParents.map((p: any, i: number) => (
                 <div key={i} className="space-y-2 bg-slate-50 p-4 rounded-2xl">
                   <FlatInput label={`${t.parent_name} ${editParents.length > 1 ? i + 1 : ''}`}
