@@ -16,7 +16,7 @@ import pytz
 from sqlalchemy.orm import Session
 
 from app.db import models
-from app.bot import payment_flow
+from app.bot import form_flow, payment_flow
 from app.bot.qa_handler import _next_weekday, PANAMA_TZ
 from app.utils.summary_formatter import generate_weekly_summary
 from app.whatsapp.client import WahaClient
@@ -331,6 +331,97 @@ async def start_receipt_flow(args, *, raw_jid, chat_id, db, sender, **kw) -> Non
     logger.info(f"INTENT_TOOLS start_receipt_flow fundraiser={fundraiser.name}")
 
 
+async def start_form(args, *, raw_jid, chat_id, db, sender, **kw) -> None:
+    """Start the form-response flow for the form the sender wants to fill.
+
+    Resolves by form_code, exact title, or substring match — but only among
+    forms whose audience intersects the sender's classrooms and that the
+    sender has not yet submitted.
+    """
+    query = (args.get("form_title_or_code") or "").strip()
+    classroom_ids = _sender_classroom_ids(sender, db)
+    if not classroom_ids:
+        wa.send_text(chat_id, "No tengo tu salón vinculado. Pide al delegado que te comparta el código del formulario.")
+        return
+
+    # All open forms for the sender's classrooms
+    candidates = (
+        db.query(models.Form)
+        .join(models.FormAudience, models.FormAudience.form_id == models.Form.id)
+        .filter(
+            models.Form.status.in_(["open", "active"]),
+            models.FormAudience.classroom_id.in_(classroom_ids),
+        )
+        .distinct()
+        .all()
+    )
+    if not candidates:
+        wa.send_text(chat_id, "No hay formularios abiertos para tu salón en este momento.")
+        return
+
+    # Exclude already-submitted forms
+    sender_jid = getattr(sender, "jid", None) or getattr(sender, "whatsapp_jid", None)
+    if sender_jid:
+        submitted = {
+            r[0] for r in db.query(models.FormSubmission.form_id)
+            .filter(
+                models.FormSubmission.respondent_jid == sender_jid,
+                models.FormSubmission.status == "submitted",
+            ).all()
+        }
+        candidates = [f for f in candidates if f.id not in submitted]
+    if not candidates:
+        wa.send_text(chat_id, "Ya respondiste los formularios abiertos para tu salón.")
+        return
+
+    form = None
+    if query:
+        q_norm = query.strip().strip("*_~`").lower()
+        # exact code
+        for f in candidates:
+            if (f.form_code or "").lower() == q_norm:
+                form = f
+                break
+        # exact title
+        if not form:
+            for f in candidates:
+                if (f.title or "").lower() == q_norm:
+                    form = f
+                    break
+        # substring on title
+        if not form:
+            matches = [f for f in candidates if q_norm in (f.title or "").lower()]
+            if len(matches) == 1:
+                form = matches[0]
+    elif len(candidates) == 1:
+        form = candidates[0]
+
+    if not form:
+        listing = "\n".join(f"- *{f.title}* (código: `{f.form_code}`)" for f in candidates)
+        wa.send_text(
+            chat_id,
+            f"Tienes varios formularios abiertos. ¿Cuál quieres responder?\n{listing}",
+        )
+        return
+
+    await form_flow.start_from_code(raw_jid, chat_id, form.form_code, db)
+    logger.info(f"INTENT_TOOLS start_form form_id={form.id} code={form.form_code}")
+
+
+def _sender_classroom_ids(sender, db: Session) -> list[int]:
+    if isinstance(sender, models.Parent):
+        students = (
+            db.query(models.Student)
+            .filter(models.Student.id.in_(sender.student_ids or []))
+            .all()
+        )
+        return [s.classroom_id for s in students if s.classroom_id]
+    if isinstance(sender, models.KnownContact):
+        kcgs = db.query(models.KnownContactGroup).filter_by(contact_jid=sender.jid, active=True).all()
+        return [kcg.classroom_id for kcg in kcgs if kcg.classroom_id]
+    return []
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _get_student_ids(sender, db: Session, chat_id: str = "") -> list[int]:
@@ -366,4 +457,5 @@ _TOOL_MAP = {
     "start_payment": start_payment,
     "start_receipt_flow": start_receipt_flow,
     "list_active_fundraisers": list_active_fundraisers,
+    "start_form": start_form,
 }

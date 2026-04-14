@@ -42,6 +42,7 @@ _TOOL_HISTORY_NOTE = {
     "query_assignments_week": "[Ya envié el resumen semanal de actividades]",
     "start_payment": "[Se inició el flujo de pago]",
     "start_receipt_flow": "[Se inició el proceso de comprobante de pago]",
+    "start_form": "[Se inició el formulario]",
 }
 
 
@@ -113,6 +114,29 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "start_form",
+            "description": (
+                "Inicia un formulario para que el padre lo responda directamente por chat. "
+                "Usa cuando el usuario dice que quiere responder/llenar/completar un formulario, "
+                "pregunta cómo responder uno, o menciona un formulario abierto por nombre (ej. "
+                "'jersey', 'tallas', 'encuesta'). Si hay más de un formulario abierto y el usuario "
+                "no identifica claramente cuál, pasa `form_title_or_code` con lo que dijo; la "
+                "herramienta pedirá aclaración si hace falta."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "form_title_or_code": {
+                        "type": "string",
+                        "description": "Código (FORM-XXXXX) o palabra del título del formulario",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_active_fundraisers",
             "description": (
                 "Lista las actividades escolares activas que están aceptando pagos. "
@@ -151,7 +175,7 @@ Reglas estrictas:
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
 - Las actividades, materiales y cualquier dato son ESTRICTAMENTE por fecha: SOLO reporta información que aparezca listada bajo la fecha específica consultada. Nunca atribuyas datos de otro día aunque estén en el contexto
 - Cuando el usuario quiere pagar, pregunta cómo pagar, dice "cómo hago", o muestra intención de pago → SIEMPRE usa la herramienta start_payment. NUNCA expliques el proceso de pago con texto, solo inicia el flujo.
-- Si el usuario pregunta por formularios/encuestas o si hay alguno pendiente → lista los formularios abiertos y dile que envíe el código (ej. `FORM-XXXXX`) para responder
+- Si el usuario quiere responder/llenar/completar un formulario, o menciona un formulario por nombre → SIEMPRE usa la herramienta start_form. NO le pidas al usuario que envíe el código — la herramienta inicia el flujo automáticamente. Si pregunta simplemente *qué* formularios hay, basta con listarlos
 - NUNCA termines tu respuesta con una pregunta — responde de forma concisa y directa, sin preguntar "¿necesitas algo más?" ni similares
 - SIEMPRE incluye el link (🔗) de las actividades que menciones en tu respuesta, si está disponible en los datos
 
@@ -310,7 +334,7 @@ def _build_forms_context(sender, db: Session, sender_classroom_ids: list[int]) -
         return "Formularios abiertos: ya respondiste todos los que te corresponden."
 
     lines = [
-        "Formularios abiertos para tu salón (envíale al padre el código para responder):",
+        "Formularios abiertos para tu salón (usa start_form para iniciarlos):",
     ]
     for f in pending:
         closes = f" (cierra {f.closes_at.strftime('%d/%m')})" if f.closes_at else ""
