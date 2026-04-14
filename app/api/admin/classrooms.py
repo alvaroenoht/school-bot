@@ -1,4 +1,5 @@
 import logging
+import unicodedata
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -171,16 +172,43 @@ async def list_members(
             display_names[key] = raw
         groups.setdefault(key, []).append(entry)
 
-    # Build name → Student index for this classroom for bday editing
-    students_by_name = {
-        (s.name or "").lower().strip(): s
-        for s in db.query(models.Student).filter_by(classroom_id=classroom_id).all()
-    }
+    # Build Student list + token index for this classroom for bday editing.
+    # KCG child_name may be short ("Chloe Gallimore") while Student.name is
+    # the Seduca-synced full name ("Chloe Lucia Gallimore Gonzalez"). Match
+    # via accent-stripped token subset.
+    def _norm(s: str) -> str:
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return s.lower().strip()
+
+    def _tokens(s: str) -> set[str]:
+        return {t for t in _norm(s).split() if len(t) >= 3}
+
+    classroom_students = db.query(models.Student).filter_by(classroom_id=classroom_id).all()
+    student_tokens = [(s, _tokens(s.name)) for s in classroom_students]
+    students_by_exact = {_norm(s.name): s for s in classroom_students}
+
+    def _match_student(display: str):
+        hit = students_by_exact.get(_norm(display))
+        if hit:
+            return hit
+        dtoks = _tokens(display)
+        if not dtoks:
+            return None
+        best, best_overlap = None, 0
+        for s, stoks in student_tokens:
+            if not stoks:
+                continue
+            # subset either way
+            overlap = len(dtoks & stoks)
+            if (dtoks.issubset(stoks) or stoks.issubset(dtoks)) and overlap >= 2 and overlap > best_overlap:
+                best, best_overlap = s, overlap
+        return best
 
     members = []
     for key, parent_entries in groups.items():
         display = display_names.get(key) or "—"
-        student = students_by_name.get(display.lower().strip())
+        student = _match_student(display)
         members.append({
             "child_name": display,
             "parents": parent_entries,

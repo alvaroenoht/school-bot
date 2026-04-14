@@ -115,6 +115,7 @@ export default function AdminApp() {
   const [forms, setForms] = useState<any[]>([]);
   const [classrooms, setClassrooms] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
+  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [showArchivedFunds, setShowArchivedFunds] = useState(false);
@@ -275,17 +276,19 @@ export default function AdminApp() {
     const af = opts?.archivedFunds ?? showArchivedFunds;
     const afo = opts?.archivedForms ?? showArchivedForms;
     try {
-      const [fr, fo, cl, ev, ac] = await Promise.all([
+      const [fr, fo, cl, ev, up, ac] = await Promise.all([
         api.get(af ? '/fundraisers?include_closed=true' : '/fundraisers'),
         api.get(afo ? '/forms?include_closed=true' : '/forms'),
         api.get('/classrooms'),
         api.get('/events'),
+        api.get('/events/upcoming?days=30'),
         api.get('/auth/accounts'),
       ]);
       setFundraisers(fr.data || []);
       setForms(fo.data || []);
       setClassrooms(cl.data || []);
       setEvents(ev.data || []);
+      setUpcomingEvents(up.data || []);
       setAccounts(ac.data || []);
       if ((ac.data || []).length > 0) setFAccountId(String(ac.data[0].id));
     } catch (e) { console.error(e); setError('Error loading data'); }
@@ -910,6 +913,43 @@ export default function AdminApp() {
                 <DashCard title={t.events} icon={<Calendar />} color="bg-amber-500"
                   count={events.length} loading={dataLoading} onClick={() => goTab('events')} />
               </div>
+
+              {/* Upcoming events */}
+              {upcomingEvents.length > 0 && (
+                <div>
+                  <h2 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 px-1">
+                    Próximos eventos
+                  </h2>
+                  <div className="space-y-2">
+                    {upcomingEvents.slice(0, 8).map((ev: any, i: number) => {
+                      const meta = ev.type === 'birthday' ? { icon: '🎂', bg: 'bg-pink-100', text: 'text-pink-700' }
+                        : ev.type === 'holiday' ? { icon: '🎉', bg: 'bg-emerald-100', text: 'text-emerald-700' }
+                        : ev.type === 'exam' ? { icon: '📝', bg: 'bg-red-100', text: 'text-red-700' }
+                        : { icon: '📅', bg: 'bg-amber-100', text: 'text-amber-700' };
+                      const d = new Date(ev.date + 'T00:00:00');
+                      const today = new Date(); today.setHours(0, 0, 0, 0);
+                      const diffDays = Math.round((d.getTime() - today.getTime()) / 86400000);
+                      const rel = diffDays === 0 ? 'Hoy' : diffDays === 1 ? 'Mañana' : `En ${diffDays} días`;
+                      const dateLabel = d.toLocaleDateString('es', { day: 'numeric', month: 'short' });
+                      return (
+                        <div key={`${ev.id || 'syn'}-${i}`}
+                          onClick={() => !ev.synthetic && goTab('events')}
+                          className={`bg-white rounded-2xl p-4 flex items-center gap-3 border border-slate-100 ${ev.synthetic ? '' : 'cursor-pointer active:scale-[0.98] transition-transform'}`}>
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl ${meta.bg}`}>
+                            {meta.icon}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-black text-sm truncate">{ev.title}</div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              {dateLabel} · {rel}{ev.location ? ` · ${ev.location}` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Assistant — hidden for now */}
             </motion.div>

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, date, time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -97,6 +97,94 @@ async def list_events(
             .all()
         )
     return [_serialize_event(e) for e in events]
+
+
+@router.get("/upcoming")
+async def list_upcoming(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    """Upcoming events scoped to caller: concrete Events + synthetic birthdays
+    from Student.birth_date in the window."""
+    today = date.today()
+    horizon = today + timedelta(days=max(1, min(days, 365)))
+
+    # Scope classrooms
+    if admin["is_super_admin"]:
+        scope_classroom_ids = None  # all
+    else:
+        scope_classroom_ids = [r["classroom_id"] for r in admin["roles"]]
+
+    # Concrete events in window
+    q = (
+        db.query(models.Event)
+        .outerjoin(models.EventAudience)
+        .filter(
+            models.Event.date >= datetime.combine(today, time.min),
+            models.Event.date <  datetime.combine(horizon, time.min),
+        )
+    )
+    if scope_classroom_ids is not None:
+        q = q.filter(
+            (models.Event.is_global == True)  # noqa: E712
+            | (models.EventAudience.classroom_id.in_(scope_classroom_ids))
+        )
+    events = q.distinct().all()
+
+    items: list[dict] = []
+    for e in events:
+        items.append({
+            "id": e.id,
+            "title": e.title,
+            "date": e.date.date().isoformat(),
+            "type": e.type,
+            "location": e.location,
+            "is_global": e.is_global,
+            "synthetic": False,
+            "student_name": e.student.name if e.student else None,
+        })
+
+    # Synthetic birthdays from Student.birth_date
+    sq = db.query(models.Student).filter(models.Student.birth_date.isnot(None))
+    if scope_classroom_ids is not None:
+        sq = sq.filter(models.Student.classroom_id.in_(scope_classroom_ids))
+    for s in sq.all():
+        bd = s.birth_date
+        # Compute next occurrence after today (leap-day kids shift to Mar 1)
+        try:
+            next_bday = bd.replace(year=today.year)
+        except ValueError:
+            next_bday = date(today.year, 3, 1)
+        if next_bday < today:
+            try:
+                next_bday = bd.replace(year=today.year + 1)
+            except ValueError:
+                next_bday = date(today.year + 1, 3, 1)
+        if next_bday >= horizon:
+            continue
+        # Skip if a concrete birthday Event for this student on this date already listed
+        already = any(
+            it["type"] == "birthday"
+            and it.get("student_name") == s.name
+            and it["date"] == next_bday.isoformat()
+            for it in items
+        )
+        if already:
+            continue
+        items.append({
+            "id": None,
+            "title": f"Cumpleaños de {s.name}",
+            "date": next_bday.isoformat(),
+            "type": "birthday",
+            "location": None,
+            "is_global": False,
+            "synthetic": True,
+            "student_name": s.name,
+        })
+
+    items.sort(key=lambda x: x["date"])
+    return items
 
 
 @router.get("/{event_id}")
