@@ -139,6 +139,7 @@ Tu rol:
 - Ayudar a padres con consultas sobre tareas y actividades escolares
 - Guiar pagos de actividades escolares
 - Responder preguntas sobre el calendario escolar
+- Avisar sobre formularios abiertos e indicar el código para responderlos
 
 Reglas estrictas:
 - Respuestas CORTAS (2-4 líneas máximo, estilo WhatsApp)
@@ -150,12 +151,15 @@ Reglas estrictas:
 - Cuando presentes datos de actividades, usa formato WhatsApp con emojis y negritas
 - Las actividades, materiales y cualquier dato son ESTRICTAMENTE por fecha: SOLO reporta información que aparezca listada bajo la fecha específica consultada. Nunca atribuyas datos de otro día aunque estén en el contexto
 - Cuando el usuario quiere pagar, pregunta cómo pagar, dice "cómo hago", o muestra intención de pago → SIEMPRE usa la herramienta start_payment. NUNCA expliques el proceso de pago con texto, solo inicia el flujo.
+- Si el usuario pregunta por formularios/encuestas o si hay alguno pendiente → lista los formularios abiertos y dile que envíe el código (ej. `FORM-XXXXX`) para responder
 - NUNCA termines tu respuesta con una pregunta — responde de forma concisa y directa, sin preguntar "¿necesitas algo más?" ni similares
 - SIEMPRE incluye el link (🔗) de las actividades que menciones en tu respuesta, si está disponible en los datos
 
 {sender_context}
 
 {fundraiser_context}
+
+{forms_context}
 
 {events_context}
 
@@ -167,7 +171,9 @@ def _build_system_prompt(sender, is_admin: bool, db: Session, chat_id: str = "")
     """Build system prompt with sender context, fundraisers, and assignments."""
     today = datetime.now(PANAMA_TZ).date()
     sender_ctx = _build_sender_context(sender, is_admin, db)
-    fundraiser_ctx = _build_fundraiser_context(db)
+    sender_classroom_ids = _sender_classroom_ids(sender, db)
+    fundraiser_ctx = _build_fundraiser_context(db, sender_classroom_ids)
+    forms_ctx = _build_forms_context(sender, db, sender_classroom_ids)
     events_ctx = _build_events_context(sender, db)
     assignments_ctx = _build_assignments_context(sender, db, chat_id)
 
@@ -182,10 +188,26 @@ def _build_system_prompt(sender, is_admin: bool, db: Session, chat_id: str = "")
         today_date=today.strftime("%d/%m/%Y"),
         sender_context=sender_ctx,
         fundraiser_context=fundraiser_ctx,
+        forms_context=forms_ctx,
         events_context=events_ctx,
         assignments_context=assignments_ctx,
         student_name_rule=name_rule,
     )
+
+
+def _sender_classroom_ids(sender, db: Session) -> list[int]:
+    """Return the classroom IDs this sender belongs to (for audience filtering)."""
+    if isinstance(sender, models.Parent):
+        students = (
+            db.query(models.Student)
+            .filter(models.Student.id.in_(sender.student_ids or []))
+            .all()
+        )
+        return [s.classroom_id for s in students if s.classroom_id]
+    if isinstance(sender, models.KnownContact):
+        kcgs = db.query(models.KnownContactGroup).filter_by(contact_jid=sender.jid, active=True).all()
+        return [kcg.classroom_id for kcg in kcgs if kcg.classroom_id]
+    return []
 
 
 def _build_sender_context(sender, is_admin: bool, db: Session) -> str:
@@ -223,17 +245,76 @@ def _build_sender_context(sender, is_admin: bool, db: Session) -> str:
     return "Usuario: desconocido"
 
 
-def _build_fundraiser_context(db: Session) -> str:
-    """Build a brief list of active fundraisers for the system prompt."""
+def _build_fundraiser_context(db: Session, sender_classroom_ids: list[int]) -> str:
+    """Build a brief list of active fundraisers SCOPED to the sender's classrooms.
+
+    A fundraiser is visible when its audience is empty/null (global) OR
+    intersects the sender's classrooms.
+    """
     active = db.query(models.Fundraiser).filter_by(status="active").all()
-    if not active:
-        return "Actividades activas: ninguna."
-    lines = ["Actividades activas (para pagar, usa start_payment con el nombre):"]
+    sender_set = set(sender_classroom_ids or [])
+    visible = []
     for f in active:
+        aud = f.audience_classroom_ids or []
+        if not aud:
+            visible.append(f)
+        elif sender_set & set(aud):
+            visible.append(f)
+    if not visible:
+        return "Actividades activas: ninguna para tu salón."
+    lines = ["Actividades activas (para pagar, usa start_payment con el nombre):"]
+    for f in visible:
         if f.type == "fixed":
             lines.append(f"- {f.name} [código: {f.code}] (monto fijo ${f.fixed_amount})")
         else:
             lines.append(f"- {f.name} [código: {f.code}] (catálogo de productos)")
+    return "\n".join(lines)
+
+
+def _build_forms_context(sender, db: Session, sender_classroom_ids: list[int]) -> str:
+    """Open/active forms targeting the sender's classrooms, excluding forms
+    the sender has already submitted.
+    """
+    if not sender_classroom_ids:
+        return "Formularios abiertos: ninguno para tu salón."
+
+    q = (
+        db.query(models.Form)
+        .join(models.FormAudience, models.FormAudience.form_id == models.Form.id)
+        .filter(
+            models.Form.status.in_(["open", "active"]),
+            models.FormAudience.classroom_id.in_(sender_classroom_ids),
+        )
+        .distinct()
+    )
+    forms = q.all()
+    if not forms:
+        return "Formularios abiertos: ninguno para tu salón."
+
+    # Exclude already-submitted by this sender
+    sender_jid = getattr(sender, "jid", None) or getattr(sender, "whatsapp_jid", None)
+    submitted_ids: set[int] = set()
+    if sender_jid:
+        rows = (
+            db.query(models.FormSubmission.form_id)
+            .filter(
+                models.FormSubmission.respondent_jid == sender_jid,
+                models.FormSubmission.status == "submitted",
+            )
+            .all()
+        )
+        submitted_ids = {r[0] for r in rows}
+
+    pending = [f for f in forms if f.id not in submitted_ids]
+    if not pending:
+        return "Formularios abiertos: ya respondiste todos los que te corresponden."
+
+    lines = [
+        "Formularios abiertos para tu salón (envíale al padre el código para responder):",
+    ]
+    for f in pending:
+        closes = f" (cierra {f.closes_at.strftime('%d/%m')})" if f.closes_at else ""
+        lines.append(f"- {f.title} [código: {f.form_code}]{closes}")
     return "\n".join(lines)
 
 
