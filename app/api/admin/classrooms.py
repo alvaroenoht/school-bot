@@ -171,11 +171,21 @@ async def list_members(
             display_names[key] = raw
         groups.setdefault(key, []).append(entry)
 
+    # Build name → Student index for this classroom for bday editing
+    students_by_name = {
+        (s.name or "").lower().strip(): s
+        for s in db.query(models.Student).filter_by(classroom_id=classroom_id).all()
+    }
+
     members = []
     for key, parent_entries in groups.items():
+        display = display_names.get(key) or "—"
+        student = students_by_name.get(display.lower().strip())
         members.append({
-            "child_name": display_names.get(key) or "—",
+            "child_name": display,
             "parents": parent_entries,
+            "student_id": student.id if student else None,
+            "birth_date": student.birth_date.isoformat() if (student and student.birth_date) else None,
         })
     members.sort(key=lambda r: r["child_name"].lower())
 

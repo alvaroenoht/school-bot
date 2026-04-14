@@ -128,6 +128,7 @@ export default function AdminApp() {
   const [reportData, setReportData] = useState<any>(null);
   const [editingMember, setEditingMember] = useState<any>(null);
   const [editChildName, setEditChildName] = useState('');
+  const [editBirthDate, setEditBirthDate] = useState('');
   const [editParents, setEditParents] = useState<any[]>([]);
 
   // Modals
@@ -195,6 +196,8 @@ export default function AdminApp() {
   const [evDesc, setEvDesc] = useState('');
   const [evDate, setEvDate] = useState('');
   const [evLocation, setEvLocation] = useState('');
+  const [evType, setEvType] = useState<'general' | 'holiday' | 'exam'>('general');
+  const [evAudience, setEvAudience] = useState<number[]>([]);
 
   // Account form
   const [accLabel, setAccLabel] = useState('');
@@ -501,6 +504,7 @@ export default function AdminApp() {
   const openMemberEdit = (member: any) => {
     setEditingMember(member);
     setEditChildName(member.child_name && member.child_name !== '—' ? member.child_name : '');
+    setEditBirthDate(member.birth_date || '');
     setEditParents((member.parents || []).map((p: any) => ({
       ...p,
       editName: p.name || '',
@@ -512,13 +516,20 @@ export default function AdminApp() {
     if (!editingMember || !selectedGroup) return;
     setLoading(true);
     try {
-      const updates = editParents.map((p: any) =>
+      const updates: Promise<any>[] = editParents.map((p: any) =>
         api.patch(`/classrooms/${selectedGroup.id}/contacts/${p.id}`, {
           child_name: editChildName.trim() || null,
           name: p.editName.trim() || null,
           is_primary_payer: p.is_primary_payer,
         })
       );
+      if (editingMember.student_id && editBirthDate !== (editingMember.birth_date || '')) {
+        updates.push(
+          api.patch(`/students/${editingMember.student_id}`, {
+            birth_date: editBirthDate || null,
+          })
+        );
+      }
       await Promise.all(updates);
       setEditingMember(null);
       const r = await api.get(`/classrooms/${selectedGroup.id}/members`);
@@ -657,9 +668,13 @@ export default function AdminApp() {
     if (!evTitle.trim()) return;
     setLoading(true);
     try {
-      await api.post('/events', { title: evTitle, description: evDesc, date: evDate, location: evLocation });
+      await api.post('/events', {
+        title: evTitle, description: evDesc, date: evDate, location: evLocation,
+        type: evType, audience_classroom_ids: evAudience,
+      });
       setShowNewEvent(false);
       setEvTitle(''); setEvDesc(''); setEvDate(''); setEvLocation('');
+      setEvType('general'); setEvAudience([]);
       await fetchAll();
       goTab('events');
     } catch { setError('Error creating'); }
@@ -943,19 +958,35 @@ export default function AdminApp() {
               <div className="space-y-4">
                 {events.length === 0 ? (
                   <div className="text-center text-slate-400 py-12">{t.no_items}</div>
-                ) : events.map((ev: any, i: number) => (
-                  <div key={i} className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-amber-500 rounded-2xl flex items-center justify-center text-white flex-shrink-0">
-                        <Calendar className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="font-black text-slate-800 truncate">{ev.title}</h4>
-                        <p className="text-[10px] font-bold text-slate-400">{ev.date ? new Date(ev.date).toLocaleDateString() : ''} {ev.location && `· ${ev.location}`}</p>
+                ) : events.map((ev: any, i: number) => {
+                  const typeMeta: Record<string, { icon: string; color: string; label: string }> = {
+                    birthday: { icon: '🎂', color: 'bg-pink-500', label: 'Cumpleaños' },
+                    holiday:  { icon: '🎉', color: 'bg-emerald-500', label: 'Feriado' },
+                    exam:     { icon: '📝', color: 'bg-red-500', label: 'Examen' },
+                    general:  { icon: '📅', color: 'bg-amber-500', label: 'General' },
+                  };
+                  const meta = typeMeta[ev.type] || typeMeta.general;
+                  return (
+                    <div key={i} className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-12 h-12 ${meta.color} rounded-2xl flex items-center justify-center text-white text-xl flex-shrink-0`}>
+                          {meta.icon}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-black text-slate-800 truncate">{ev.title}</h4>
+                            <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 flex-shrink-0">{meta.label}</span>
+                          </div>
+                          <p className="text-[10px] font-bold text-slate-400">
+                            {ev.date ? new Date(ev.date).toLocaleDateString() : ''}
+                            {ev.location && ` · ${ev.location}`}
+                            {ev.is_global && ' · 🌐 Global'}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </motion.div>
           )}
@@ -1655,6 +1686,23 @@ export default function AdminApp() {
                 value={evDate} onChange={setEvDate} type="datetime-local" />
               <FlatInput label={t.event_location} icon={<Globe className="w-4 h-4" />}
                 value={evLocation} onChange={setEvLocation} />
+              <div className="space-y-2">
+                <label className="label-sm">Tipo</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { v: 'general', label: '📅 General' },
+                    { v: 'holiday', label: '🎉 Feriado' },
+                    { v: 'exam',    label: '📝 Examen'  },
+                  ] as const).map(opt => (
+                    <button key={opt.v} onClick={() => setEvType(opt.v)}
+                      className={`py-3 rounded-2xl text-xs font-black uppercase ${evType === opt.v ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <AudiencePicker label={t.audience} classrooms={classrooms} selected={evAudience}
+                onToggle={(id: number) => toggleAudience(id, evAudience, setEvAudience)} />
               <button onClick={createEvent} disabled={loading || !evTitle.trim()}
                 className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black shadow-xl disabled:opacity-50">
                 {loading ? '...' : t.create}
@@ -1707,6 +1755,14 @@ export default function AdminApp() {
             <div className="space-y-5">
               <FlatInput label={t.student_name} icon={<User className="w-4 h-4" />}
                 value={editChildName} onChange={setEditChildName} />
+              {editingMember.student_id ? (
+                <FlatInput label="Cumpleaños 🎂" icon={<Calendar className="w-4 h-4" />}
+                  value={editBirthDate} onChange={setEditBirthDate} type="date" />
+              ) : (
+                <div className="text-[10px] font-bold text-slate-400 px-1">
+                  Cumpleaños no editable — el nombre no coincide con un estudiante sincronizado.
+                </div>
+              )}
               {editParents.map((p: any, i: number) => (
                 <div key={i} className="space-y-2 bg-slate-50 p-4 rounded-2xl">
                   <FlatInput label={`${t.parent_name} ${editParents.length > 1 ? i + 1 : ''}`}

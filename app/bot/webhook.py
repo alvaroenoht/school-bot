@@ -157,13 +157,6 @@ async def whatsapp_webhook(request: Request):
         # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
         if _is_group(chat_id):
 
-            # Admin group commands (e.g. /subscribe_calendar) — no @mention needed
-            if wa.resolve_phone(raw_jid) == settings.admin_phone and raw_text.startswith("/"):
-                from app.bot import calendar_commands
-                handled = await calendar_commands.handle_group(chat_id, raw_text, db)
-                if handled:
-                    return {"status": "ok"}
-
             # vincular <id> \u2014 no @mention needed, sender must be registered parent
             if raw_text.lstrip("/").lower().startswith("vincular "):
                 _handle_vincular(raw_jid, chat_id, raw_text.lstrip("/"), db, wa)

@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey,
+    Boolean, Column, Date, DateTime, Float, ForeignKey,
     Integer, JSON, String, Text, Time, UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -73,6 +73,7 @@ class Student(Base):
     grade        = Column(String, nullable=False)
     classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
     parent_id    = Column(Integer, ForeignKey("parents.id"), nullable=True)
+    birth_date   = Column(Date, nullable=True)
 
     classroom    = relationship("Classroom", back_populates="students")
     assignments  = relationship("Assignment", back_populates="student")
@@ -404,9 +405,14 @@ class Event(Base):
     date         = Column(DateTime, nullable=False)
     location     = Column(String, nullable=True)
     is_global    = Column(Boolean, default=False)
+    type         = Column(String, nullable=False, default="general")  # birthday|holiday|exam|general
+    student_id   = Column(Integer, ForeignKey("students.id"), nullable=True)
+    notified_day_before = Column(Boolean, default=False)
+    notified_day_of     = Column(Boolean, default=False)
     created_at   = Column(DateTime, default=datetime.utcnow)
 
     audience = relationship("EventAudience", back_populates="event", cascade="all, delete-orphan")
+    student  = relationship("Student")
 
 
 class EventAudience(Base):

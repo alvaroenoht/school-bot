@@ -157,6 +157,8 @@ Reglas estrictas:
 
 {fundraiser_context}
 
+{events_context}
+
 {assignments_context}\
 """
 
@@ -166,6 +168,7 @@ def _build_system_prompt(sender, is_admin: bool, db: Session, chat_id: str = "")
     today = datetime.now(PANAMA_TZ).date()
     sender_ctx = _build_sender_context(sender, is_admin, db)
     fundraiser_ctx = _build_fundraiser_context(db)
+    events_ctx = _build_events_context(sender, db)
     assignments_ctx = _build_assignments_context(sender, db, chat_id)
 
     is_group = chat_id and "@g.us" in chat_id
@@ -179,6 +182,7 @@ def _build_system_prompt(sender, is_admin: bool, db: Session, chat_id: str = "")
         today_date=today.strftime("%d/%m/%Y"),
         sender_context=sender_ctx,
         fundraiser_context=fundraiser_ctx,
+        events_context=events_ctx,
         assignments_context=assignments_ctx,
         student_name_rule=name_rule,
     )
@@ -230,6 +234,55 @@ def _build_fundraiser_context(db: Session) -> str:
             lines.append(f"- {f.name} [código: {f.code}] (monto fijo ${f.fixed_amount})")
         else:
             lines.append(f"- {f.name} [código: {f.code}] (catálogo de productos)")
+    return "\n".join(lines)
+
+
+def _build_events_context(sender, db: Session) -> str:
+    """Upcoming events (next 14 days) filtered by sender's classrooms or is_global."""
+    today = datetime.now(PANAMA_TZ).date()
+    horizon = today + timedelta(days=14)
+
+    # Determine sender's classroom IDs
+    classroom_ids: list[int] = []
+    if isinstance(sender, models.Parent):
+        students = (
+            db.query(models.Student)
+            .filter(models.Student.id.in_(sender.student_ids or []))
+            .all()
+        )
+        classroom_ids = [s.classroom_id for s in students if s.classroom_id]
+    elif isinstance(sender, models.KnownContact):
+        kcgs = db.query(models.KnownContactGroup).filter_by(contact_jid=sender.jid, active=True).all()
+        classroom_ids = [kcg.classroom_id for kcg in kcgs if kcg.classroom_id]
+
+    # Query upcoming events: global OR audience intersects sender's classrooms
+    q = (
+        db.query(models.Event)
+        .outerjoin(models.EventAudience)
+        .filter(
+            models.Event.date >= datetime.combine(today, datetime.min.time()),
+            models.Event.date <  datetime.combine(horizon, datetime.min.time()),
+        )
+    )
+    if classroom_ids:
+        q = q.filter(
+            (models.Event.is_global == True)  # noqa: E712
+            | (models.EventAudience.classroom_id.in_(classroom_ids))
+        )
+    else:
+        q = q.filter(models.Event.is_global == True)  # noqa: E712
+
+    events = q.distinct().order_by(models.Event.date).limit(20).all()
+    if not events:
+        return "Eventos próximos: ninguno en los próximos 14 días."
+
+    icon = {"birthday": "🎂", "holiday": "🎉", "exam": "📝", "general": "📅"}
+    lines = ["Eventos próximos (próximos 14 días):"]
+    for e in events:
+        d = e.date.strftime("%d/%m")
+        ic = icon.get(e.type, "📅")
+        loc = f" — {e.location}" if e.location else ""
+        lines.append(f"- {ic} {d} {e.title}{loc}")
     return "\n".join(lines)
 
 
