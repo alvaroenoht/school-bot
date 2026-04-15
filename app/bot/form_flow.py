@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
+from app.utils.jid_utils import find_parent_by_jid
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -229,7 +230,7 @@ def _start_form(
     db: Session,
 ):
     """Create FormSubmission and start asking questions."""
-    parent = db.query(models.Parent).filter_by(whatsapp_jid=raw_jid, is_active=True).first()
+    parent = find_parent_by_jid(db, raw_jid, wa)
     if parent:
         respondent_name = f"{parent.first_name} {parent.last_name}"
     else:
@@ -602,7 +603,7 @@ async def start_from_code(raw_jid: str, chat_id: str, code: str, db: Session, ad
     audience_classroom_ids = {a.classroom_id for a in audience_rows}
 
     # Check registered parent first
-    parent = db.query(models.Parent).filter_by(whatsapp_jid=raw_jid, is_active=True).first()
+    parent = find_parent_by_jid(db, raw_jid, wa)
     if parent:
         parent_classroom_ids = {
             s.classroom_id

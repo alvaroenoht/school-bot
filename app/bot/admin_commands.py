@@ -23,6 +23,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.db import models
+from app.utils.jid_utils import find_parent_by_jid
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -220,13 +221,8 @@ async def handle(admin_phone: str, chat_id: str, text: str, db: Session) -> bool
 
     # ── resumen ────────────────────────────────────────────────────────────────
     if cmd_lower.startswith("resumen"):
-        # Find the admin's parent record
-        parent = db.query(models.Parent).filter_by(
-            whatsapp_jid=chat_id.replace("@c.us", "@lid").split("@")[0]
-        ).first()
-        if not parent:
-            # Fallback: find any active parent
-            parent = db.query(models.Parent).filter_by(is_active=True).first()
+        # Find the admin's parent record (matcher handles @c.us / @lid drift)
+        parent = find_parent_by_jid(db, chat_id, wa)
 
         if not parent or not parent.student_ids:
             wa.send_text(chat_id, "❌ No hay estudiantes vinculados.")

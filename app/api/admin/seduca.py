@@ -20,6 +20,7 @@ from app.api.seduca_client import SeducaClient
 from app.db import models
 from app.db.database import get_db
 from app.utils.crypto import decrypt, encrypt
+from app.utils.seduca_groups import upsert_seduca_groups
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["seduca"])
@@ -41,38 +42,6 @@ def _get_parent_for_admin(admin: dict, db: Session) -> models.Parent:
             detail="No parent record for this admin phone. Register via WhatsApp first.",
         )
     return parent
-
-
-def _upsert_seduca_groups(
-    students: list[dict],
-    parent: models.Parent,
-    db: Session,
-) -> list[models.SeducaGroup]:
-    """Upsert SeducaGroup rows from a list of Seduca students (children).
-    Deduped by seduca_group_id — a second admin with the same child hits the existing row.
-    """
-    now = datetime.utcnow()
-    result = []
-    for s in students:
-        sid = str(s["id"])
-        name = f"{s['name']} - {s.get('grade', '')}".strip(" -")
-        existing = db.query(models.SeducaGroup).filter_by(seduca_group_id=sid).first()
-        if existing:
-            existing.name = name
-            existing.last_fetched_at = now
-            result.append(existing)
-        else:
-            sg = models.SeducaGroup(
-                seduca_group_id=sid,
-                name=name,
-                discovered_by_id=parent.id,
-                last_fetched_at=now,
-            )
-            db.add(sg)
-            db.flush()
-            result.append(sg)
-    db.commit()
-    return result
 
 
 # ── Seduca credentials ─────────────────────────────────────────────────────────
@@ -102,7 +71,7 @@ async def save_seduca_creds(
 
     # Auto-discover — reuse the already-logged-in session
     students = client.fetch_students()
-    groups = _upsert_seduca_groups(students, parent, db)
+    groups = upsert_seduca_groups(students, parent, db)
 
     return {
         "status": "saved",
