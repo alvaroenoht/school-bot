@@ -12,6 +12,7 @@ Steps:
 import logging
 from datetime import datetime
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -608,10 +609,22 @@ async def start_from_code(raw_jid: str, chat_id: str, code: str, db: Session, ad
     # Check registered parent first
     parent = find_parent_by_jid(db, raw_jid, wa)
     if parent:
+        # Resolve classrooms via BOTH Student.parent_id FK and Parent.student_ids
+        # JSON. In already-split databases, registration never rewires Student FKs
+        # to the keeper row find_parent_by_jid selects, so the FK filter alone
+        # can come up empty even though student_ids is populated.
+        sids = parent.student_ids or []
+        if sids:
+            student_q = db.query(models.Student).filter(
+                or_(
+                    models.Student.parent_id == parent.id,
+                    models.Student.id.in_(sids),
+                )
+            )
+        else:
+            student_q = db.query(models.Student).filter_by(parent_id=parent.id)
         parent_classroom_ids = {
-            s.classroom_id
-            for s in db.query(models.Student).filter_by(parent_id=parent.id).all()
-            if s.classroom_id
+            s.classroom_id for s in student_q.all() if s.classroom_id
         }
         if not parent_classroom_ids & audience_classroom_ids:
             wa.send_text(
