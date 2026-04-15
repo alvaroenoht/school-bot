@@ -32,7 +32,18 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-              navigator.serviceWorker.register('/sw.js');
+              navigator.serviceWorker.register('/sw.js').then(reg => {
+                reg.update();
+                reg.addEventListener('updatefound', () => {
+                  const nw = reg.installing;
+                  if (!nw) return;
+                  nw.addEventListener('statechange', () => {
+                    if (nw.state === 'activated' && navigator.serviceWorker.controller) {
+                      location.reload();
+                    }
+                  });
+                });
+              });
             });
           }
         `}} />
