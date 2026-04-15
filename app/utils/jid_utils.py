@@ -97,7 +97,6 @@ def find_parent_by_jid(
             for p in lid_parents:
                 if safe_phone(p.whatsapp_jid, wa) == phone:
                     _add(p)
-                    break
 
     if not candidates:
         return None
