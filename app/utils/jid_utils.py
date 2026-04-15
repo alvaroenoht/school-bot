@@ -18,7 +18,7 @@ def _looks_like_phone(s: str | None) -> bool:
     return bool(s) and s.isdigit() and 8 <= len(s) <= 15
 
 
-def _safe_phone(raw_jid: str, wa: WahaClient | None) -> str | None:
+def safe_phone(raw_jid: str, wa: WahaClient | None) -> str | None:
     if "@c.us" in raw_jid:
         p = raw_jid.split("@", 1)[0].lstrip("+")
         return p if _looks_like_phone(p) else None
@@ -36,7 +36,7 @@ def canonicalize_jid(raw_jid: str, wa: WahaClient | None) -> str:
     Used at insert time so new Parent rows land on a stable identity; existing
     bot callers still reach them via find_parent_by_jid's exact-match step.
     """
-    phone = _safe_phone(raw_jid, wa)
+    phone = safe_phone(raw_jid, wa)
     return f"{phone}@c.us" if phone else raw_jid
 
 
@@ -67,7 +67,7 @@ def find_parent_by_jid(
 
     _add(q.filter(models.Parent.whatsapp_jid == raw_jid).first())
 
-    phone = _safe_phone(raw_jid, wa)
+    phone = safe_phone(raw_jid, wa)
     if phone:
         # @lid-input → @c.us stored: alt is direct.
         # @c.us-input → @lid stored: the lid is opaque WAHA state not derivable
@@ -75,6 +75,7 @@ def find_parent_by_jid(
         if "@lid" in raw_jid:
             _add(q.filter(models.Parent.whatsapp_jid == f"{phone}@c.us").first())
 
+        kc_match: models.Parent | None = None
         kc = (
             db.query(models.KnownContact)
             .filter(models.KnownContact.phone == phone)
@@ -82,7 +83,21 @@ def find_parent_by_jid(
             .first()
         )
         if kc:
-            _add(q.filter(models.Parent.whatsapp_jid == kc.jid).first())
+            kc_match = q.filter(models.Parent.whatsapp_jid == kc.jid).first()
+            if kc_match:
+                _add(kc_match)
+
+        # Last-resort reverse lookup for @c.us → stored @lid when the KC
+        # bridge is absent. The lid is opaque WAHA state, so we enumerate
+        # @lid parents and resolve_phone each. Bounded by @lid-parent count
+        # (small) and skipped entirely for @lid inputs (already covered by
+        # the direct @c.us swap above).
+        if "@c.us" in raw_jid and not kc_match and wa is not None:
+            lid_parents = q.filter(models.Parent.whatsapp_jid.like("%@lid")).all()
+            for p in lid_parents:
+                if safe_phone(p.whatsapp_jid, wa) == phone:
+                    _add(p)
+                    break
 
     if not candidates:
         return None

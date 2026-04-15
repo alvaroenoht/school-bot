@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
+from app.utils.jid_utils import safe_phone
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -70,9 +71,12 @@ async def handle(
     elif session.step == "awaiting_child_name":
         data["child_name"] = text.strip()
 
-        # Save KnownContact (child_name stored as fallback; primary is on KCG)
+        # Save KnownContact (child_name stored as fallback; primary is on KCG).
+        # phone bridges @c.us ↔ @lid drift for find_parent_by_jid callers
+        # (admin seduca lookup, DM routing, etc).
         contact = models.KnownContact(
             jid=raw_jid,
+            phone=safe_phone(raw_jid, wa),
             name=data["name"],
             child_name=data["child_name"],
             source_group_id=data.get("source_group_id"),
