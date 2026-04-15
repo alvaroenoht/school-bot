@@ -31,7 +31,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.api.seduca_client import SeducaClient
 from app.db import models
 from app.utils.crypto import decrypt, encrypt
-from app.utils.jid_utils import find_parent_by_jid
+from app.utils.jid_utils import canonicalize_jid, find_parent_by_jid
 from app.utils.seduca_groups import upsert_seduca_groups
 from app.whatsapp.client import WahaClient
 
@@ -146,7 +146,7 @@ async def handle(
                 parent = models.Parent(
                     first_name=data["first_name"],
                     last_name=data["last_name"],
-                    whatsapp_jid=raw_jid,
+                    whatsapp_jid=canonicalize_jid(raw_jid, wa),
                     registered_at=datetime.utcnow(),
                 )
                 db.add(parent)
@@ -262,7 +262,7 @@ async def handle(
             parent = models.Parent(
                 first_name=data["first_name"],
                 last_name=data["last_name"],
-                whatsapp_jid=raw_jid,
+                whatsapp_jid=canonicalize_jid(raw_jid, wa),
                 classroom_id=None,
                 encrypted_username=data["enc_username"],
                 encrypted_password=data["enc_password"],

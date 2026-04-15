@@ -20,7 +20,9 @@ from app.api.seduca_client import SeducaClient
 from app.db import models
 from app.db.database import get_db
 from app.utils.crypto import decrypt, encrypt
+from app.utils.jid_utils import find_parent_by_jid
 from app.utils.seduca_groups import upsert_seduca_groups
+from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["seduca"])
@@ -30,12 +32,9 @@ router = APIRouter(tags=["seduca"])
 
 def _get_parent_for_admin(admin: dict, db: Session) -> models.Parent:
     phone = admin["phone"]
-    parent = db.query(models.Parent).filter_by(whatsapp_jid=f"{phone}@c.us").first()
-    if not parent:
-        # Fallback for @lid JIDs: bridge via KnownContact.phone
-        kc = db.query(models.KnownContact).filter_by(phone=phone).first()
-        if kc:
-            parent = db.query(models.Parent).filter_by(whatsapp_jid=kc.jid).first()
+    parent = find_parent_by_jid(
+        db, f"{phone}@c.us", WahaClient(), require_active=False
+    )
     if not parent:
         raise HTTPException(
             status_code=404,
