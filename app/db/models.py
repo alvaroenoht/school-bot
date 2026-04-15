@@ -221,6 +221,8 @@ class Fundraiser(Base):
     type                    = Column(String, nullable=False)
     fixed_amount            = Column(String, nullable=True)
     status                  = Column(String, default="active")
+    mode                    = Column(String, default="campaign", nullable=False)   # campaign | fund
+    transparency_enabled    = Column(Boolean, default=False, nullable=False)
     created_by_jid          = Column(String, nullable=True)
     audience_classroom_ids  = Column(JSON, nullable=True)
     created_at              = Column(DateTime, default=datetime.utcnow)
@@ -229,6 +231,7 @@ class Fundraiser(Base):
     products     = relationship("FundraiserProduct", back_populates="fundraiser", cascade="all, delete-orphan")
     payments     = relationship("Payment", back_populates="fundraiser")
     subscribers  = relationship("FundraiserSubscriber", back_populates="fundraiser", cascade="all, delete-orphan")
+    activities   = relationship("FundraiserActivity", back_populates="fundraiser", cascade="all, delete-orphan")
 
 
 class FundraiserSubscriber(Base):
@@ -261,22 +264,32 @@ class Payment(Base):
     """A payment/receipt submitted for a fundraiser."""
     __tablename__ = "payments"
 
-    id                = Column(Integer, primary_key=True, index=True)
-    fundraiser_id     = Column(Integer, ForeignKey("fundraisers.id"), nullable=False, index=True)
-    payer_jid         = Column(String, nullable=False, index=True)
-    payer_name        = Column(String, nullable=False)
-    child_name        = Column(String, nullable=True)
-    amount            = Column(String, nullable=True)
-    confirmation_code = Column(String, nullable=True)
-    receipt_media_url = Column(String, nullable=True)
-    textract_raw      = Column(JSON, nullable=True)
-    confidence_score  = Column(Float, nullable=True)
-    status            = Column(String, default="pending")
-    flag_reason       = Column(String, nullable=True)
-    submitted_at      = Column(DateTime, default=datetime.utcnow)
+    id                  = Column(Integer, primary_key=True, index=True)
+    fundraiser_id       = Column(Integer, ForeignKey("fundraisers.id"), nullable=False, index=True)
+    payer_jid           = Column(String, nullable=False, index=True)
+    payer_name          = Column(String, nullable=False)
+    child_name          = Column(String, nullable=True)
+    amount              = Column(String, nullable=True)
+    confirmation_code   = Column(String, nullable=True)
+    receipt_media_url   = Column(String, nullable=True)
+    textract_raw        = Column(JSON, nullable=True)
+    confidence_score    = Column(Float, nullable=True)
+    status              = Column(String, default="pending")
+    flag_reason         = Column(String, nullable=True)
+    submitted_at        = Column(DateTime, default=datetime.utcnow)
+    # Manual-entry trust metadata
+    entry_method        = Column(String, default="receipt", nullable=False)  # receipt | manual
+    recorded_by_jid     = Column(String, nullable=True)
+    method_note         = Column(Text, nullable=True)
+    manual_proof_url    = Column(String, nullable=True)
+    manual_proof_s3_key = Column(String, nullable=True)
+    voided_at           = Column(DateTime, nullable=True)
+    voided_by_jid       = Column(String, nullable=True)
+    void_reason         = Column(Text, nullable=True)
 
     fundraiser  = relationship("Fundraiser", back_populates="payments")
     order_items = relationship("OrderItem", back_populates="payment")
+    audit_trail = relationship("PaymentAudit", back_populates="payment", cascade="all, delete-orphan")
 
 
 class OrderItem(Base):
@@ -291,6 +304,70 @@ class OrderItem(Base):
 
     payment = relationship("Payment", back_populates="order_items")
     product = relationship("FundraiserProduct", back_populates="order_items")
+
+
+class FundraiserActivity(Base):
+    """An activity/event under a group-fund fundraiser that groups expenses."""
+    __tablename__ = "fundraiser_activities"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    fundraiser_id   = Column(Integer, ForeignKey("fundraisers.id"), nullable=False, index=True)
+    name            = Column(String, nullable=False)
+    description     = Column(Text, nullable=True)
+    occurred_on     = Column(Date, nullable=True)
+    created_by_jid  = Column(String, nullable=False)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    fundraiser = relationship("Fundraiser", back_populates="activities")
+    expenses   = relationship("FundraiserExpense", back_populates="activity", cascade="all, delete-orphan")
+
+
+class FundraiserExpense(Base):
+    """A single expense line within an activity. Must have at least one receipt."""
+    __tablename__ = "fundraiser_expenses"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    activity_id     = Column(Integer, ForeignKey("fundraiser_activities.id"), nullable=False, index=True)
+    title           = Column(String, nullable=False)
+    amount          = Column(String, nullable=False)
+    spent_on        = Column(Date, nullable=True)
+    note            = Column(Text, nullable=True)
+    created_by_jid  = Column(String, nullable=False)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    activity = relationship("FundraiserActivity", back_populates="expenses")
+    receipts = relationship("ExpenseReceipt", back_populates="expense", cascade="all, delete-orphan")
+
+
+class PaymentAudit(Base):
+    """Append-only audit trail for payment mutations (manual entry, void, restore)."""
+    __tablename__ = "payment_audit"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    payment_id  = Column(Integer, ForeignKey("payments.id"), nullable=False, index=True)
+    action      = Column(String, nullable=False)  # created_manual | voided | restored
+    actor_jid   = Column(String, nullable=False)
+    snapshot    = Column(JSON, nullable=False)
+    at          = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    payment = relationship("Payment", back_populates="audit_trail")
+
+
+class ExpenseReceipt(Base):
+    """One uploaded proof file (image/PDF) for an expense. Multiple allowed per expense."""
+    __tablename__ = "expense_receipts"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    expense_id      = Column(Integer, ForeignKey("fundraiser_expenses.id"), nullable=False, index=True)
+    media_url       = Column(String, nullable=False)
+    s3_key          = Column(String, nullable=False)
+    filename        = Column(String, nullable=True)
+    content_type    = Column(String, nullable=True)
+    size_bytes      = Column(Integer, nullable=True)
+    uploaded_by_jid = Column(String, nullable=False)
+    uploaded_at     = Column(DateTime, default=datetime.utcnow)
+
+    expense = relationship("FundraiserExpense", back_populates="receipts")
 
 
 class Form(Base):

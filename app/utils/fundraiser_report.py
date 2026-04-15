@@ -230,7 +230,10 @@ def _write_variable(ws, fundraiser, payments, db):
 
 def _write_fixed(ws, payments, db):
     """Simple name/student/amount table for fixed fundraisers."""
-    _apply_header(ws, ["Nombre", "Estudiante", "Salón", "Monto ($)", "Estado", "Fecha"])
+    _apply_header(ws, [
+        "Nombre", "Estudiante", "Salón", "Monto ($)", "Estado",
+        "Origen", "Registrado por", "Nota", "Anulado", "Fecha",
+    ])
 
     grand_total = 0.0
 
@@ -239,26 +242,37 @@ def _write_fixed(ws, payments, db):
             amount = float(payment.amount) if payment.amount else 0.0
         except (ValueError, TypeError):
             amount = 0.0
-        grand_total += amount
+        is_voided = payment.voided_at is not None
+        if not is_voided:
+            grand_total += amount
 
         classroom_name = _get_student_classroom(payment, db)
         status = "Confirmado" if payment.status == "confirmed" else (
             "Por revisar" if payment.status == "flagged" else payment.status
         )
+        origin = "Manual" if payment.entry_method == "manual" else "Recibo"
         date_str = payment.submitted_at.strftime("%Y-%m-%d %H:%M") if payment.submitted_at else ""
+        voided_str = (
+            payment.voided_at.strftime("%Y-%m-%d %H:%M") + (f" — {payment.void_reason}" if payment.void_reason else "")
+            if is_voided else ""
+        )
         ws.append([
             payment.payer_name,
             payment.child_name or "",
             classroom_name,
             round(amount, 2) if amount else "",
             status,
+            origin,
+            payment.recorded_by_jid or "",
+            payment.method_note or "",
+            voided_str,
             date_str,
         ])
 
     # Totals row
-    ws.append(["TOTAL", "", "", round(grand_total, 2), "", ""])
+    ws.append(["TOTAL", "", "", round(grand_total, 2), "", "", "", "", "", ""])
     total_row_idx = ws.max_row
-    for col_idx in range(1, 7):
+    for col_idx in range(1, 11):
         cell = ws.cell(row=total_row_idx, column=col_idx)
         cell.font = _TOTAL_FONT
         cell.fill = _TOTAL_FILL

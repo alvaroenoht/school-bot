@@ -9,6 +9,9 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import api from '@/lib/api';
+import { TransparencyPanel } from '@/components/fundraisers/TransparencyPanel';
+import { ManualPaymentModal } from '@/components/fundraisers/ManualPaymentModal';
+import { PaymentAuditDrawer } from '@/components/fundraisers/PaymentAuditDrawer';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Product { name: string; price: string; }
@@ -164,6 +167,14 @@ export default function AdminApp() {
   const [fAccountId, setFAccountId] = useState('');
   const [fAudience, setFAudience] = useState<number[]>([]);
   const [fProducts, setFProducts] = useState<Product[]>([{ name: '', price: '' }]);
+  const [fMode, setFMode] = useState<'campaign' | 'fund'>('campaign');
+
+  // Report sub-view (payments vs transparency for fund-mode fundraisers)
+  const [reportSubView, setReportSubView] = useState<'payments' | 'transparency'>('payments');
+
+  // Manual-payment modal + audit drawer
+  const [showManualPayment, setShowManualPayment] = useState(false);
+  const [auditingPaymentId, setAuditingPaymentId] = useState<number | null>(null);
 
   // Fundraiser edit
   const [editingFundraiser, setEditingFundraiser] = useState<any>(null);
@@ -448,10 +459,40 @@ export default function AdminApp() {
 
   const selectReport = async (item: any, type: 'fundraiser' | 'form') => {
     setSelectedReport({ ...item, type }); setReportData(null);
+    setReportSubView('payments');
     try {
       const path = type === 'fundraiser' ? `/fundraisers/${item.id}/report` : `/forms/${item.id}/report`;
       const r = await api.get(path); setReportData(r.data);
     } catch (e) { console.error(e); }
+  };
+
+  const refreshReportData = async () => {
+    if (!selectedReport || selectedReport.type !== 'fundraiser') return;
+    try {
+      const r = await api.get(`/fundraisers/${selectedReport.id}/report`);
+      setReportData(r.data);
+    } catch (e) { console.error(e); }
+  };
+
+  const voidPayment = async (paymentId: number) => {
+    const reason = prompt('Motivo de la anulación:');
+    if (!reason || !reason.trim()) return;
+    try {
+      await api.post(`/fundraisers/payments/${paymentId}/void`, { reason: reason.trim() });
+      await refreshReportData();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'No se pudo anular el pago');
+    }
+  };
+
+  const restorePayment = async (paymentId: number) => {
+    if (!confirm('¿Restaurar este pago anulado?')) return;
+    try {
+      await api.post(`/fundraisers/payments/${paymentId}/restore`);
+      await refreshReportData();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'No se pudo restaurar');
+    }
   };
 
   const sendReminder = async () => {
@@ -652,9 +693,10 @@ export default function AdminApp() {
         fixed_amount: fType === 'fixed' ? fAmount : null,
         audience_classroom_ids: fAudience,
         products: fType === 'variable' ? fProducts.filter(p => p.name) : null,
+        mode: fMode,
       });
       setShowNewFundraiser(false);
-      setFName(''); setFAmount(''); setFAudience([]); setFProducts([{ name: '', price: '' }]);
+      setFName(''); setFAmount(''); setFAudience([]); setFProducts([{ name: '', price: '' }]); setFMode('campaign');
       await fetchAll();
       goTab('fundraisers');
     } catch { setError('Error creating'); }
@@ -1330,8 +1372,8 @@ export default function AdminApp() {
                 </div>
                 {selectedReport.type === 'fundraiser' && reportData && (
                   <div className="flex items-baseline gap-3 mt-2 mb-4">
-                    <span className="text-3xl font-black">${reportData.payments?.reduce((s: number, p: any) => s + (p.status === 'confirmed' ? parseFloat(p.amount || 0) : 0), 0).toFixed(2)}</span>
-                    <span className="text-white/50 text-xs font-bold">{reportData.payments?.filter((p: any) => p.status === 'confirmed').length || 0} pagos</span>
+                    <span className="text-3xl font-black">${reportData.payments?.reduce((s: number, p: any) => s + (p.status === 'confirmed' && !p.voided_at ? parseFloat(p.amount || 0) : 0), 0).toFixed(2)}</span>
+                    <span className="text-white/50 text-xs font-bold">{reportData.payments?.filter((p: any) => p.status === 'confirmed' && !p.voided_at).length || 0} pagos</span>
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2">
@@ -1363,11 +1405,45 @@ export default function AdminApp() {
                 </div>
               </div>
 
+              {/* Fund-mode tab switcher (payments vs transparency) */}
+              {selectedReport.type === 'fundraiser' && selectedReport.mode === 'fund' && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setReportSubView('payments')}
+                    className={`flex-1 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${reportSubView === 'payments' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-400'}`}
+                  >
+                    Pagos
+                  </button>
+                  <button
+                    onClick={() => setReportSubView('transparency')}
+                    className={`flex-1 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${reportSubView === 'transparency' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-400'}`}
+                  >
+                    Transparencia
+                  </button>
+                </div>
+              )}
+
+              {selectedReport.type === 'fundraiser' && selectedReport.mode === 'fund' && reportSubView === 'transparency' ? (
+                <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-100">
+                  <h3 className="text-xl font-black tracking-tight mb-6">Transparencia</h3>
+                  <TransparencyPanel fundraiserId={selectedReport.id} />
+                </div>
+              ) : (
               <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-100">
-                <h3 className="text-xl font-black tracking-tight mb-6 flex items-center gap-3">
-                  {selectedReport.type === 'fundraiser' ? t.payments : t.submissions}
-                  <span className="text-xs bg-slate-100 text-slate-400 px-3 py-1 rounded-full">LIVE</span>
-                </h3>
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-black tracking-tight flex items-center gap-3">
+                    {selectedReport.type === 'fundraiser' ? t.payments : t.submissions}
+                    <span className="text-xs bg-slate-100 text-slate-400 px-3 py-1 rounded-full">LIVE</span>
+                  </h3>
+                  {selectedReport.type === 'fundraiser' && (
+                    <button
+                      onClick={() => setShowManualPayment(true)}
+                      className="bg-indigo-50 text-indigo-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                    >
+                      + Pago manual
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-4">
                   {reportData == null ? (
                     <div className="text-center text-slate-400 py-4">{t.loading}</div>
@@ -1385,14 +1461,21 @@ export default function AdminApp() {
                       const unpaid: any[] = reportData?.unpaid || [];
                       return <>
                         {groups.map((g: any, i: number) => {
-                          const total = g.payments.reduce((sum: number, p: any) => sum + parseFloat(p.amount || 0), 0);
-                          const allConfirmed = g.payments.every((p: any) => p.status === 'confirmed');
-                          const anyConfirmed = g.payments.some((p: any) => p.status === 'confirmed');
+                          const live = g.payments.filter((p: any) => !p.voided_at);
+                          const total = live.reduce((sum: number, p: any) => sum + parseFloat(p.amount || 0), 0);
+                          const allConfirmed = live.length > 0 && live.every((p: any) => p.status === 'confirmed');
+                          const anyConfirmed = live.some((p: any) => p.status === 'confirmed');
+                          const hasManual = g.payments.some((p: any) => p.entry_method === 'manual');
+                          const hasVoided = g.payments.some((p: any) => p.voided_at);
                           return (
                             <div key={i} onClick={() => { setSelectedPayerGroup(g); setShowPaymentModal(true); }}
                               className="flex justify-between items-center p-4 bg-slate-50/50 hover:bg-slate-100 rounded-2xl border border-slate-50 cursor-pointer active:scale-[0.98] transition-transform">
                               <div className="min-w-0">
-                                <div className="font-black text-slate-800 text-xs truncate">{g.name}</div>
+                                <div className="font-black text-slate-800 text-xs truncate flex items-center gap-1.5">
+                                  {g.name}
+                                  {hasManual && <span className="text-[9px] font-black uppercase bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full">manual</span>}
+                                  {hasVoided && <span className="text-[9px] font-black uppercase bg-red-50 text-red-500 px-1.5 py-0.5 rounded-full">anulado</span>}
+                                </div>
                                 <div className="text-[10px] text-slate-400 font-bold">{g.child}</div>
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
@@ -1452,6 +1535,7 @@ export default function AdminApp() {
                   )}
                 </div>
               </div>
+              )}
             </motion.div>
           )}
 
@@ -1520,6 +1604,26 @@ export default function AdminApp() {
                     ))}
                   </select>
                 )}
+              </div>
+
+              {/* Mode */}
+              <div className="space-y-2">
+                <label className="label-sm">Modo</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setFMode('campaign')}
+                    className={`py-3 rounded-2xl text-xs font-black uppercase transition-all ${fMode === 'campaign' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-400'}`}>
+                    Campaña
+                  </button>
+                  <button onClick={() => setFMode('fund')}
+                    className={`py-3 rounded-2xl text-xs font-black uppercase transition-all ${fMode === 'fund' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-400'}`}>
+                    Fondo
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 font-bold leading-snug">
+                  {fMode === 'fund'
+                    ? 'Fondo colectivo: acumula aportes para financiar varias actividades. Permite subir comprobantes de gastos.'
+                    : 'Campaña: recauda una vez para un propósito específico.'}
+                </p>
               </div>
 
               {/* Type */}
@@ -1920,6 +2024,24 @@ export default function AdminApp() {
         )}
       </AnimatePresence>
 
+      {/* Manual payment + audit drawer (fund-mode fundraisers) */}
+      <AnimatePresence>
+        {showManualPayment && selectedReport?.type === 'fundraiser' && (
+          <ManualPaymentModal
+            fundraiserId={selectedReport.id}
+            fundraiserName={selectedReport.name}
+            onClose={() => setShowManualPayment(false)}
+            onSaved={async () => { setShowManualPayment(false); await refreshReportData(); }}
+          />
+        )}
+        {auditingPaymentId != null && (
+          <PaymentAuditDrawer
+            paymentId={auditingPaymentId}
+            onClose={() => setAuditingPaymentId(null)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Payment slip modal */}
       <AnimatePresence>
         {showPaymentModal && selectedPayerGroup && (
@@ -1929,21 +2051,36 @@ export default function AdminApp() {
                 <div className="font-black text-slate-800">{selectedPayerGroup.name}</div>
                 <div className="text-xs text-slate-400 font-bold">{selectedPayerGroup.child}</div>
               </div>
-              {selectedPayerGroup.payments.map((p: any, i: number) => (
-                <div key={i} className="bg-slate-50 rounded-2xl p-4 space-y-2">
+              {selectedPayerGroup.payments.map((p: any, i: number) => {
+                const isManual = p.entry_method === 'manual';
+                const isVoided = !!p.voided_at;
+                return (
+                <div key={i} className={`rounded-2xl p-4 space-y-2 ${isVoided ? 'bg-red-50/40 border border-red-100' : 'bg-slate-50'}`}>
                   <div className="flex justify-between items-start">
-                    <div>
-                      <div className="font-black text-slate-800 text-sm">${p.amount}</div>
+                    <div className="min-w-0">
+                      <div className={`font-black text-sm ${isVoided ? 'text-slate-400 line-through' : 'text-slate-800'}`}>${p.amount}</div>
                       <div className="text-[10px] font-bold text-slate-400">
                         {p.date ? new Date(p.date).toLocaleDateString() : ''}
                         {p.confirmation_code && <span className="ml-2">· #{p.confirmation_code}</span>}
                       </div>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {isManual && (
+                          <span className="text-[9px] font-black uppercase bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full">
+                            manual
+                          </span>
+                        )}
+                        {isVoided && (
+                          <span className="text-[9px] font-black uppercase bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">
+                            anulado
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${p.status === 'confirmed' ? 'bg-emerald-50 text-emerald-600' : p.status === 'rejected' ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-600'}`}>
-                        {p.status}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${p.status === 'confirmed' && !isVoided ? 'bg-emerald-50 text-emerald-600' : p.status === 'rejected' || isVoided ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-600'}`}>
+                        {isVoided ? 'voided' : p.status}
                       </span>
-                      {p.status !== 'rejected' && (
+                      {!isVoided && p.status !== 'rejected' && (
                         <button onClick={() => rejectPayment(p.id)}
                           className="text-slate-300 hover:text-red-400 transition-colors" title="Rechazar">
                           <X className="w-4 h-4" />
@@ -1951,8 +2088,21 @@ export default function AdminApp() {
                       )}
                     </div>
                   </div>
-                  {p.receipt_media_url && (
-                    <img src={p.receipt_media_url} alt="Comprobante"
+                  {p.method_note && (
+                    <div className="text-[11px] text-slate-600 italic">{p.method_note}</div>
+                  )}
+                  {p.recorded_by_jid && (
+                    <div className="text-[10px] text-slate-400 font-bold">
+                      Registrado por: <span className="font-mono">{p.recorded_by_jid}</span>
+                    </div>
+                  )}
+                  {isVoided && p.void_reason && (
+                    <div className="text-[11px] text-red-600 font-bold">
+                      Anulado: {p.void_reason}
+                    </div>
+                  )}
+                  {(p.receipt_media_url || p.manual_proof_url) && (
+                    <img src={p.receipt_media_url || p.manual_proof_url} alt="Comprobante"
                       className="w-full rounded-2xl border border-slate-100 object-contain max-h-64" />
                   )}
                   {p.order_items?.length > 0 && (
@@ -1968,8 +2118,32 @@ export default function AdminApp() {
                       </div>
                     </div>
                   )}
+                  <div className="flex gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      onClick={() => setAuditingPaymentId(p.id)}
+                      className="text-[10px] font-black uppercase text-slate-500 hover:text-indigo-600 transition-colors"
+                    >
+                      Auditoría
+                    </button>
+                    {isVoided ? (
+                      <button
+                        onClick={() => restorePayment(p.id)}
+                        className="text-[10px] font-black uppercase text-emerald-600 hover:text-emerald-700 ml-auto"
+                      >
+                        Restaurar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => voidPayment(p.id)}
+                        className="text-[10px] font-black uppercase text-red-500 hover:text-red-600 ml-auto"
+                      >
+                        Anular
+                      </button>
+                    )}
+                  </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </Modal>
         )}
@@ -2031,9 +2205,12 @@ export default function AdminApp() {
                             ? 'bg-indigo-600 text-white'
                             : 'bg-slate-50 hover:bg-indigo-50 text-slate-700 disabled:opacity-40'
                         }`}>
-                        {g.classroom_name || g.name}
+                        <div>{g.classroom_name || g.name}</div>
+                        {g.classroom_name && g.name && g.classroom_name !== g.name && (
+                          <div className="text-[10px] font-semibold opacity-60 mt-0.5">{g.name}</div>
+                        )}
                         {g.bound_classroom_id && g.bound_classroom_id !== seducaLinkClassroomId &&
-                          <span className="ml-2 text-[9px] opacity-60">({g.bound_classroom_name})</span>}
+                          <span className="mt-1 inline-block text-[9px] opacity-60">({g.bound_classroom_name})</span>}
                       </button>
                     ))}
                   </div>
