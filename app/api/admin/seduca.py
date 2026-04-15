@@ -28,8 +28,13 @@ router = APIRouter(tags=["seduca"])
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _get_parent_for_admin(admin: dict, db: Session) -> models.Parent:
-    jid = f"{admin['phone']}@c.us"
-    parent = db.query(models.Parent).filter_by(whatsapp_jid=jid).first()
+    phone = admin["phone"]
+    parent = db.query(models.Parent).filter_by(whatsapp_jid=f"{phone}@c.us").first()
+    if not parent:
+        # Fallback for @lid JIDs: bridge via KnownContact.phone
+        kc = db.query(models.KnownContact).filter_by(phone=phone).first()
+        if kc:
+            parent = db.query(models.Parent).filter_by(whatsapp_jid=kc.jid).first()
     if not parent:
         raise HTTPException(
             status_code=404,
