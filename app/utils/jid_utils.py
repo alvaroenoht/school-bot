@@ -49,5 +49,20 @@ def find_parent_by_jid(
     if not phone:
         return None
 
-    alt = f"{phone}@lid" if "@c.us" in raw_jid else f"{phone}@c.us"
-    return q.filter(models.Parent.whatsapp_jid == alt).first()
+    # @lid-input → @c.us stored: alt is direct (we have the phone).
+    # @c.us-input → @lid stored: the lid is an opaque WAHA identifier, not
+    # derivable from the phone. Bridge via KnownContact.phone → kc.jid.
+    if "@lid" in raw_jid:
+        alt_hit = q.filter(models.Parent.whatsapp_jid == f"{phone}@c.us").first()
+        if alt_hit:
+            return alt_hit
+
+    kc = (
+        db.query(models.KnownContact)
+        .filter(models.KnownContact.phone == phone)
+        .filter(models.KnownContact.jid != raw_jid)
+        .first()
+    )
+    if kc:
+        return q.filter(models.Parent.whatsapp_jid == kc.jid).first()
+    return None

@@ -231,6 +231,9 @@ def _start_form(
 ):
     """Create FormSubmission and start asking questions."""
     parent = find_parent_by_jid(db, raw_jid, wa)
+    # Use the parent's stored JID as the canonical respondent identity so
+    # dedup + reports stay stable across WAHA @c.us ↔ @lid drift.
+    respondent_jid = parent.whatsapp_jid if parent else raw_jid
     if parent:
         respondent_name = f"{parent.first_name} {parent.last_name}"
     else:
@@ -305,7 +308,7 @@ def _start_form(
     # Check for existing submission for this (form, respondent, student)
     submission = db.query(models.FormSubmission).filter_by(
         form_id=form.id,
-        respondent_jid=raw_jid,
+        respondent_jid=respondent_jid,
         student_id=target_student_id,
     ).first()
 
@@ -326,7 +329,7 @@ def _start_form(
     if not submission:
         submission = models.FormSubmission(
             form_id=form.id,
-            respondent_jid=raw_jid,
+            respondent_jid=respondent_jid,
             respondent_name=respondent_name,
             student_id=target_student_id,
             status="in_progress",

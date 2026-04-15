@@ -83,7 +83,11 @@ async def handle_command(
 
     # ── /form create ──────────────────────────────────────────────────────
     if sub == "create" or sub == "crear":
-        session_data: dict = {}
+        # Persist the caller's stable Parent jid (not chat_id) so later
+        # authorization via caller_parent.whatsapp_jid still matches after
+        # a WAHA @c.us ↔ @lid drift.
+        creator_jid = caller_parent.whatsapp_jid if caller_parent else chat_id
+        session_data: dict = {"creator_jid": creator_jid}
         if caller_parent:
             # Registered parent: restrict audience to their classrooms
             allowed_ids = [
@@ -1168,7 +1172,7 @@ def _create_form(chat_id: str, data: dict, db: Session, session: models.Conversa
         purpose=data["purpose"],
         status="open" if open_now else "draft",
         form_code=_generate_form_code(db),
-        created_by_jid=chat_id,
+        created_by_jid=data.get("creator_jid", chat_id),
         opens_at=datetime.utcnow() if open_now else None,
         send_group_reminders=data.get("send_group_reminders", True),
         reminder_interval_days=data.get("reminder_interval_days", 2),
