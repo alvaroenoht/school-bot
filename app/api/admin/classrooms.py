@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.admin.auth import get_current_admin, require_write_access
 from app.db import models
 from app.db.database import get_db
+from app.utils.jid_utils import find_parent_by_jid
 from app.whatsapp.client import WahaClient
 
 _wa_instance: WahaClient | None = None
@@ -339,7 +340,7 @@ async def list_all_roles(
     result = []
     for r in roles:
         cls = db.query(models.Classroom).get(r.classroom_id)
-        parent = db.query(models.Parent).filter_by(whatsapp_jid=r.user_jid).first()
+        parent = find_parent_by_jid(db, r.user_jid, _get_wa(), require_active=False)
         result.append({
             "user_jid": r.user_jid,
             "phone": r.user_jid.replace("@c.us", "").replace("@lid", ""),
@@ -617,7 +618,7 @@ async def list_roles(
     roles = db.query(models.ClassroomRole).filter_by(classroom_id=classroom_id).all()
     result = []
     for r in roles:
-        parent = db.query(models.Parent).filter_by(whatsapp_jid=r.user_jid).first()
+        parent = find_parent_by_jid(db, r.user_jid, _get_wa(), require_active=False)
         result.append({
             "user_jid": r.user_jid,
             "phone": r.user_jid.replace("@c.us", "").replace("@lid", ""),
