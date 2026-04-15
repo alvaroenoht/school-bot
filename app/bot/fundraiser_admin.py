@@ -69,7 +69,11 @@ async def handle_command(
             )
             return True
 
-        session_data: dict = {"name": name, "creator_jid": chat_id}
+        # Persist the caller's stable Parent jid (not chat_id) so later
+        # authorization via caller_parent.whatsapp_jid still matches after
+        # a WAHA @c.us ↔ @lid drift.
+        creator_jid = caller_parent.whatsapp_jid if caller_parent else chat_id
+        session_data: dict = {"name": name, "creator_jid": creator_jid}
         if caller_parent:
             allowed_ids = [
                 s.classroom_id

@@ -2031,9 +2031,12 @@ export default function AdminApp() {
                             ? 'bg-indigo-600 text-white'
                             : 'bg-slate-50 hover:bg-indigo-50 text-slate-700 disabled:opacity-40'
                         }`}>
-                        {g.classroom_name || g.name}
+                        <div>{g.classroom_name || g.name}</div>
+                        {g.classroom_name && g.name && g.classroom_name !== g.name && (
+                          <div className="text-[10px] font-semibold opacity-60 mt-0.5">{g.name}</div>
+                        )}
                         {g.bound_classroom_id && g.bound_classroom_id !== seducaLinkClassroomId &&
-                          <span className="ml-2 text-[9px] opacity-60">({g.bound_classroom_name})</span>}
+                          <span className="mt-1 inline-block text-[9px] opacity-60">({g.bound_classroom_name})</span>}
                       </button>
                     ))}
                   </div>

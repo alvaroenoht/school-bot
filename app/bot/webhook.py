@@ -29,6 +29,7 @@ from app.bot import known_contact, fundraiser_admin, payment_flow, form_admin, f
 from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db import models
+from app.utils.jid_utils import find_parent_by_jid
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -198,9 +199,7 @@ async def whatsapp_webhook(request: Request):
                 is_super_admin = from_phone == settings.admin_phone
                 authorized = is_super_admin
                 if not authorized:
-                    invoker = db.query(models.Parent).filter_by(
-                        whatsapp_jid=raw_jid, is_active=True
-                    ).first()
+                    invoker = find_parent_by_jid(db, raw_jid, wa)
                     if invoker and invoker.student_ids:
                         authorized = db.query(models.Student).filter(
                             models.Student.id.in_(invoker.student_ids),
@@ -224,9 +223,7 @@ async def whatsapp_webhook(request: Request):
                 return {"status": "ok"}
 
             # Identify the actual sender first (parent or known contact)
-            sender = db.query(models.Parent).filter_by(
-                whatsapp_jid=raw_jid, is_active=True
-            ).first()
+            sender = find_parent_by_jid(db, raw_jid, wa)
             if not sender:
                 sender = db.query(models.KnownContact).filter_by(jid=raw_jid).first()
             if sender:
@@ -323,9 +320,7 @@ async def whatsapp_webhook(request: Request):
                 return {"status": "ok"}
 
         # 5. Registered active parent \u2014 commands, "pay/pagar", or Q&A
-        parent = db.query(models.Parent).filter_by(
-            whatsapp_jid=raw_jid, is_active=True
-        ).first()
+        parent = find_parent_by_jid(db, raw_jid, wa)
         if parent:
             # \u2500\u2500 Parent slash commands (before LLM routing) \u2500\u2500
             cmd = raw_text.strip().lstrip("/").lower()
@@ -479,9 +474,7 @@ def _handle_vincular(raw_jid: str, chat_id: str, text: str, db, wa: WahaClient):
         return
 
     classroom_id = int(parts[1])
-    parent = db.query(models.Parent).filter_by(
-        whatsapp_jid=raw_jid, is_active=True
-    ).first()
+    parent = find_parent_by_jid(db, raw_jid, wa)
 
     if not parent:
         return

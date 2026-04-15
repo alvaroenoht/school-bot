@@ -31,6 +31,8 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.api.seduca_client import SeducaClient
 from app.db import models
 from app.utils.crypto import decrypt, encrypt
+from app.utils.jid_utils import canonicalize_jid, find_parent_by_jid
+from app.utils.seduca_groups import upsert_seduca_groups
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -128,15 +130,27 @@ async def handle(
 
         # Check if user wants to skip credentials
         if user_input in ("omitir", "skip", "no tengo"):
-            # Create parent without credentials
-            parent = models.Parent(
-                first_name=data["first_name"],
-                last_name=data["last_name"],
-                whatsapp_jid=raw_jid,
-                registered_at=datetime.utcnow(),
-            )
-            db.add(parent)
-            db.flush()
+            # Reuse existing row if JID drifted (@c.us ↔ @lid); never clear creds on skip.
+            existing = find_parent_by_jid(db, raw_jid, wa, require_active=False)
+            if existing:
+                parent = existing
+                parent.is_active = True
+                if not (parent.first_name or "").strip():
+                    parent.first_name = data["first_name"]
+                if not (parent.last_name or "").strip():
+                    parent.last_name = data["last_name"]
+                if not parent.registered_at:
+                    parent.registered_at = datetime.utcnow()
+                db.flush()
+            else:
+                parent = models.Parent(
+                    first_name=data["first_name"],
+                    last_name=data["last_name"],
+                    whatsapp_jid=canonicalize_jid(raw_jid, wa),
+                    registered_at=datetime.utcnow(),
+                )
+                db.add(parent)
+                db.flush()
 
             # Mark invite code as used
             invite_obj = db.query(models.InviteCode).get(data["invite_code_id"])
@@ -230,19 +244,33 @@ async def handle(
 
         student_ids = [s["id"] for s in students]
 
-        # Create parent record (no single classroom_id -- one per student)
-        parent = models.Parent(
-            first_name=data["first_name"],
-            last_name=data["last_name"],
-            whatsapp_jid=raw_jid,
-            classroom_id=None,
-            encrypted_username=data["enc_username"],
-            encrypted_password=data["enc_password"],
-            student_ids=student_ids,
-            registered_at=datetime.utcnow(),
-        )
-        db.add(parent)
-        db.flush()
+        # Reuse existing row if JID drifted (@c.us ↔ @lid); creds just passed live login + fetch.
+        existing = find_parent_by_jid(db, raw_jid, wa, require_active=False)
+        if existing:
+            parent = existing
+            parent.is_active = True
+            parent.encrypted_username = data["enc_username"]
+            parent.encrypted_password = data["enc_password"]
+            parent.student_ids = student_ids
+            parent.registered_at = datetime.utcnow()
+            if not (parent.first_name or "").strip():
+                parent.first_name = data["first_name"]
+            if not (parent.last_name or "").strip():
+                parent.last_name = data["last_name"]
+            db.flush()
+        else:
+            parent = models.Parent(
+                first_name=data["first_name"],
+                last_name=data["last_name"],
+                whatsapp_jid=canonicalize_jid(raw_jid, wa),
+                classroom_id=None,
+                encrypted_username=data["enc_username"],
+                encrypted_password=data["enc_password"],
+                student_ids=student_ids,
+                registered_at=datetime.utcnow(),
+            )
+            db.add(parent)
+            db.flush()
 
         # Check if these students already exist (second parent with same creds)
         classroom_info = []  # [(student_dict, classroom_id)]
@@ -275,6 +303,9 @@ async def handle(
                 db.add(student_rec)
                 db.flush()
                 classroom_info.append((s, classroom.id))
+
+        # Upsert SeducaGroups so admin panel can bind them to classrooms
+        upsert_seduca_groups(students, parent, db)
 
         # Mark invite code as used
         invite_obj = db.query(models.InviteCode).get(data["invite_code_id"])
