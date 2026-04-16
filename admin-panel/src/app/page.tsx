@@ -1435,7 +1435,7 @@ export default function AdminApp() {
                     {selectedReport.type === 'fundraiser' ? t.payments : t.submissions}
                     <span className="text-xs bg-slate-100 text-slate-400 px-3 py-1 rounded-full">LIVE</span>
                   </h3>
-                  {selectedReport.type === 'fundraiser' && selectedReport.type_ !== 'variable' && reportData?.type !== 'variable' && (
+                  {selectedReport.type === 'fundraiser' && reportData && reportData.type !== 'variable' && (
                     <button
                       onClick={() => setShowManualPayment(true)}
                       className="bg-indigo-50 text-indigo-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"
