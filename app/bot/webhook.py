@@ -26,6 +26,7 @@ from fastapi import APIRouter, Request
 
 from app.bot import admin_commands, qa_handler, registration, intent_agent
 from app.bot import known_contact, fundraiser_admin, payment_flow, form_admin, form_flow
+from app.bot import transparency_command
 from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db import models
@@ -338,6 +339,10 @@ async def whatsapp_webhook(request: Request):
                 await _handle_parent_payments(parent, chat_id, db)
                 return {"status": "ok"}
 
+            if transparency_command.is_reporte_command(raw_text):
+                await transparency_command.handle(raw_jid, chat_id, raw_text, from_phone, db)
+                return {"status": "ok"}
+
             if cmd.startswith("form"):
                 await form_admin.handle_command(raw_jid, chat_id, raw_text, db, caller_parent=parent)
                 return {"status": "ok"}
@@ -375,6 +380,9 @@ async def whatsapp_webhook(request: Request):
         if contact:
             if _is_bare_pay(raw_text):
                 await payment_flow.show_pending(raw_jid, chat_id, db, contact)
+                return {"status": "ok"}
+            if transparency_command.is_reporte_command(raw_text):
+                await transparency_command.handle(raw_jid, chat_id, raw_text, from_phone, db)
                 return {"status": "ok"}
             resolved = _resolve_code(raw_text, db)
             if resolved:
@@ -648,6 +656,7 @@ _PARENT_HELP = (
     "  `pagar` — ver actividades y formularios pendientes\n"
     "  `/mis pagos` — ver historial de tus pagos\n"
     "  `/resumen` — recibir resumen semanal + PDF\n"
+    "  `reporte CÓDIGO` — reporte de transparencia de un fondo\n"
     "  `/help` — mostrar este mensaje\n\n"
     "💬 O simplemente escríbeme tu pregunta sobre tareas y actividades."
 )
