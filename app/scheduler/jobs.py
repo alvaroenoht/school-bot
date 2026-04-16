@@ -348,7 +348,7 @@ async def _sync_known_contact_groups_job():
 
         for classroom in classrooms:
             try:
-                participants = wa.get_group_participants(classroom.whatsapp_group_id)
+                participants = wa.get_group_participants(classroom.whatsapp_group_id, bypass_cache=True)
                 if not participants:
                     logger.warning("KCG sync classroom_id=%d: empty participants, skipping deactivation", classroom.id)
                     continue

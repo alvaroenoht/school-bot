@@ -5,12 +5,17 @@ import base64
 import logging
 import time
 from pathlib import Path
+from threading import Lock
 
 import requests
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_PARTICIPANTS_TTL = 1800  # 30 minutes
+_participants_cache: dict[str, tuple[float, list[str]]] = {}
+_participants_lock = Lock()
 
 
 class WahaClient:
@@ -114,28 +119,47 @@ class WahaClient:
             logger.error(f"download_media_url failed for {media_url}: {e}")
             return None
 
-    def get_group_participants(self, group_id: str) -> list[str]:
+    def get_group_participants(self, group_id: str, *, bypass_cache: bool = False) -> list[str]:
         """Get participant JIDs for a WhatsApp group.
 
         Returns serialized JIDs (e.g. '507XXXXXXXX@c.us') from the dedicated
-        participants endpoint. Callers should resolve sender @lid JIDs to phone
-        numbers before comparing — use resolve_phone() for that.
+        participants endpoint. Results are cached in-memory for 30 minutes —
+        group membership changes infrequently so this avoids blocking the admin
+        panel on every /members load. Pass bypass_cache=True to force a fresh
+        fetch (used by the KCG sync scheduler).
         """
+        if not bypass_cache:
+            with _participants_lock:
+                cached = _participants_cache.get(group_id)
+                if cached and (time.time() - cached[0]) < _PARTICIPANTS_TTL:
+                    return cached[1]
+
         url = f"{self.base_url}/api/{self.session}/groups/{group_id}/participants"
         try:
             r = requests.get(url, headers=self.headers, timeout=15)
             if r.status_code == 200:
                 participants = r.json()
-                return [
+                result = [
                     p.get("id", {}).get("_serialized", "")
                     for p in participants
                     if isinstance(p.get("id"), dict)
                 ]
+                with _participants_lock:
+                    _participants_cache[group_id] = (time.time(), result)
+                return result
             logger.warning(f"get_group_participants got {r.status_code} for {group_id}")
             return []
         except requests.RequestException as e:
             logger.error(f"get_group_participants failed for {group_id}: {e}")
             return []
+
+    def invalidate_participants_cache(self, group_id: str | None = None) -> None:
+        """Clear cached participants. Pass group_id for one group, None for all."""
+        with _participants_lock:
+            if group_id:
+                _participants_cache.pop(group_id, None)
+            else:
+                _participants_cache.clear()
 
     def list_groups(self) -> list[dict]:
         """Return all WhatsApp groups the bot session has joined."""
