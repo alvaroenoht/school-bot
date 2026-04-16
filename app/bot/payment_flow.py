@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
+from app.utils.jid_utils import canonicalize_jid, jid_equivalents
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -211,11 +212,16 @@ async def show_pending(raw_jid: str, chat_id: str, db: Session, payer):
         models.Form.id.in_(form_ids), models.Form.status == "open"
     ).all() if form_ids else []
 
-    # Check which forms already submitted
+    # Check which forms already submitted — use equivalents so legacy @lid
+    # submissions are still matched after respondent_jid canonicalization.
+    payer_jid_set = jid_equivalents(payer_jid, db, wa)
     submitted_form_ids = {
         s.form_id for s in
         db.query(models.FormSubmission)
-        .filter_by(respondent_jid=payer_jid, status="submitted")
+        .filter(
+            models.FormSubmission.respondent_jid.in_(payer_jid_set),
+            models.FormSubmission.status == "submitted",
+        )
         .all()
     }
 
@@ -241,10 +247,13 @@ async def show_pending(raw_jid: str, chat_id: str, db: Session, payer):
             status = " | ".join(status_parts) if len(f_children) > 1 else status_parts[0] if status_parts else "❌ Pendiente"
             lines.append(f"💳 *{f.code}* — {f.name} (${fixed})\n   {status}")
         else:
-            # Variable: just check if any payment exists
-            has_payment = db.query(models.Payment).filter_by(
-                fundraiser_id=f.id, payer_jid=payer_jid,
-            ).filter(models.Payment.status.in_(["confirmed", "pending"])).first()
+            # Variable: any payment under any JID equivalent counts as paid so
+            # @lid-era history survives post-canonicalization drift.
+            has_payment = db.query(models.Payment).filter(
+                models.Payment.fundraiser_id == f.id,
+                models.Payment.payer_jid.in_(payer_jid_set),
+                models.Payment.status.in_(["confirmed", "pending"]),
+            ).first()
             status = "✅ Pagado" if has_payment else "❌ Pendiente"
             lines.append(f"💳 *{f.code}* — {f.name}\n   {status}")
 
@@ -432,7 +441,20 @@ def _resolve_payer_info(payer, db: Session, audience_classroom_ids: list[int] | 
     """
     if isinstance(payer, models.Parent):
         name = f"{payer.first_name} {payer.last_name}"
-        students = db.query(models.Student).filter_by(parent_id=payer.id).all()
+        # Union Student.parent_id FK with Parent.student_ids (JSON) — in
+        # already-split databases the keeper row resolved via find_parent_by_jid
+        # may have no FK-linked students while student_ids is populated.
+        sids = payer.student_ids or []
+        if sids:
+            from sqlalchemy import or_
+            students = db.query(models.Student).filter(
+                or_(
+                    models.Student.parent_id == payer.id,
+                    models.Student.id.in_(sids),
+                )
+            ).all()
+        else:
+            students = db.query(models.Student).filter_by(parent_id=payer.id).all()
         children = [f"{s.name} ({s.grade})" for s in students] if students else [name]
         return name, children
     elif isinstance(payer, models.KnownContact):
@@ -465,9 +487,16 @@ def _resolve_payer_info(payer, db: Session, audience_classroom_ids: list[int] | 
 
 
 def _get_paid_total(fundraiser_id: int, payer_jid: str, child_name: str | None, db: Session) -> Decimal:
-    """Sum confirmed payments for this payer+child+fundraiser."""
-    payments = db.query(models.Payment).filter_by(
-        fundraiser_id=fundraiser_id, payer_jid=payer_jid, status="confirmed",
+    """Sum confirmed payments for this payer+child+fundraiser.
+
+    Queries across all JID equivalents of payer_jid so @lid-era payments still
+    count after Parent.whatsapp_jid has been canonicalized to @c.us.
+    """
+    equivalents = jid_equivalents(payer_jid, db, wa)
+    payments = db.query(models.Payment).filter(
+        models.Payment.fundraiser_id == fundraiser_id,
+        models.Payment.payer_jid.in_(equivalents),
+        models.Payment.status == "confirmed",
     ).all()
     total = Decimal("0")
     for p in payments:
@@ -711,9 +740,12 @@ async def _finalize_payment(
     flagged = bool(data.get("ocr_failed"))
     flag_reason = "ocr_failed" if data.get("ocr_failed") else None
 
+    # Canonicalize payer_jid so it aligns with Parent.whatsapp_jid (which is
+    # also canonicalized at registration). Keeps payments discoverable via
+    # Parent.whatsapp_jid even when the sender DMs from an @lid JID.
     payment = models.Payment(
         fundraiser_id=fundraiser.id,
-        payer_jid=raw_jid,
+        payer_jid=canonicalize_jid(raw_jid, wa),
         payer_name=data.get("payer_name", "?"),
         child_name=data.get("child_name"),
         amount=data.get("ocr_amount"),

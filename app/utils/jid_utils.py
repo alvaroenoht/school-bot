@@ -19,13 +19,24 @@ def _looks_like_phone(s: str | None) -> bool:
 
 
 def safe_phone(raw_jid: str, wa: WahaClient | None) -> str | None:
+    """Return the E.164-style phone for raw_jid, or None if it cannot be trusted.
+
+    WahaClient.resolve_phone falls back to `jid.replace("@lid", "")` on any WAHA
+    contact-lookup miss or timeout. Those lid digits pass the crude length check
+    below, so we reject that case explicitly — treating an unresolved @lid as
+    unknown keeps it from poisoning canonicalization or identity merges.
+    """
     if "@c.us" in raw_jid:
         p = raw_jid.split("@", 1)[0].lstrip("+")
         return p if _looks_like_phone(p) else None
     if "@lid" in raw_jid:
         if wa is None:
             return None
+        lid_digits = raw_jid.split("@", 1)[0]
         p = wa.resolve_phone(raw_jid)
+        if not p or p == lid_digits:
+            # WAHA lookup missed — resolve_phone handed back the opaque lid.
+            return None
         return p if _looks_like_phone(p) else None
     return None
 
@@ -108,3 +119,44 @@ def find_parent_by_jid(
 
     candidates.sort(key=_score, reverse=True)
     return candidates[0]
+
+
+def jid_equivalents(
+    raw_jid: str,
+    db: Session,
+    wa: WahaClient | None = None,
+) -> set[str]:
+    """Every JID string that could plausibly identify the same person as raw_jid.
+
+    Needed anywhere we read rows keyed by a raw-at-the-time JID (Payment.payer_jid,
+    FormSubmission.respondent_jid, etc.) because @c.us ↔ @lid drift means the
+    same person can have historical rows under multiple keys. Gathers:
+      * raw_jid itself
+      * {phone}@c.us when the phone can be resolved safely
+      * every KnownContact.jid sharing that phone (handles opaque @lid values)
+      * every Parent.whatsapp_jid ending in @lid whose resolved phone matches —
+        covers no-KC split-database cases where historical payments were saved
+        under the parent's original opaque @lid before canonicalization landed.
+
+    Callers should use `.in_(equivalents)` instead of exact-match equality.
+    """
+    out: set[str] = {raw_jid}
+    phone = safe_phone(raw_jid, wa)
+    if phone:
+        out.add(f"{phone}@c.us")
+        for kc in db.query(models.KnownContact).filter_by(phone=phone).all():
+            if kc.jid:
+                out.add(kc.jid)
+        # Parent-side @lid bridge when no KC row links them. `find_parent_by_jid`
+        # uses the same enumeration to pick the keeper; mirror it here so reads
+        # against that keeper still see its pre-canonicalization history.
+        if wa is not None:
+            lid_parents = (
+                db.query(models.Parent)
+                .filter(models.Parent.whatsapp_jid.like("%@lid"))
+                .all()
+            )
+            for p in lid_parents:
+                if p.whatsapp_jid and safe_phone(p.whatsapp_jid, wa) == phone:
+                    out.add(p.whatsapp_jid)
+    return out

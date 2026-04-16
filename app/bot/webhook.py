@@ -29,7 +29,7 @@ from app.bot import known_contact, fundraiser_admin, payment_flow, form_admin, f
 from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db import models
-from app.utils.jid_utils import find_parent_by_jid
+from app.utils.jid_utils import find_parent_by_jid, jid_equivalents
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -614,9 +614,13 @@ async def _handle_parent_resumen(parent: models.Parent, chat_id: str, db) -> Non
 async def _handle_parent_payments(parent: models.Parent, chat_id: str, db) -> None:
     """Show the parent's payment history across all fundraisers."""
     wa_client = WahaClient()
+    # Match every payment stored under any JID equivalent — a parent whose row
+    # was canonicalized to @c.us may still have historical payments keyed by
+    # @lid (or vice-versa in a split-database migration).
+    equivalents = jid_equivalents(parent.whatsapp_jid, db, wa_client)
     payments = (
         db.query(models.Payment)
-        .filter_by(payer_jid=parent.whatsapp_jid)
+        .filter(models.Payment.payer_jid.in_(equivalents))
         .order_by(models.Payment.submitted_at.desc())
         .all()
     )
