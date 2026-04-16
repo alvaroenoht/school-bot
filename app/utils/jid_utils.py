@@ -134,6 +134,9 @@ def jid_equivalents(
       * raw_jid itself
       * {phone}@c.us when the phone can be resolved safely
       * every KnownContact.jid sharing that phone (handles opaque @lid values)
+      * every Parent.whatsapp_jid ending in @lid whose resolved phone matches —
+        covers no-KC split-database cases where historical payments were saved
+        under the parent's original opaque @lid before canonicalization landed.
 
     Callers should use `.in_(equivalents)` instead of exact-match equality.
     """
@@ -144,4 +147,16 @@ def jid_equivalents(
         for kc in db.query(models.KnownContact).filter_by(phone=phone).all():
             if kc.jid:
                 out.add(kc.jid)
+        # Parent-side @lid bridge when no KC row links them. `find_parent_by_jid`
+        # uses the same enumeration to pick the keeper; mirror it here so reads
+        # against that keeper still see its pre-canonicalization history.
+        if wa is not None:
+            lid_parents = (
+                db.query(models.Parent)
+                .filter(models.Parent.whatsapp_jid.like("%@lid"))
+                .all()
+            )
+            for p in lid_parents:
+                if p.whatsapp_jid and safe_phone(p.whatsapp_jid, wa) == phone:
+                    out.add(p.whatsapp_jid)
     return out

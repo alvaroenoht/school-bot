@@ -247,10 +247,13 @@ async def show_pending(raw_jid: str, chat_id: str, db: Session, payer):
             status = " | ".join(status_parts) if len(f_children) > 1 else status_parts[0] if status_parts else "❌ Pendiente"
             lines.append(f"💳 *{f.code}* — {f.name} (${fixed})\n   {status}")
         else:
-            # Variable: just check if any payment exists
-            has_payment = db.query(models.Payment).filter_by(
-                fundraiser_id=f.id, payer_jid=payer_jid,
-            ).filter(models.Payment.status.in_(["confirmed", "pending"])).first()
+            # Variable: any payment under any JID equivalent counts as paid so
+            # @lid-era history survives post-canonicalization drift.
+            has_payment = db.query(models.Payment).filter(
+                models.Payment.fundraiser_id == f.id,
+                models.Payment.payer_jid.in_(payer_jid_set),
+                models.Payment.status.in_(["confirmed", "pending"]),
+            ).first()
             status = "✅ Pagado" if has_payment else "❌ Pendiente"
             lines.append(f"💳 *{f.code}* — {f.name}\n   {status}")
 
@@ -438,7 +441,20 @@ def _resolve_payer_info(payer, db: Session, audience_classroom_ids: list[int] | 
     """
     if isinstance(payer, models.Parent):
         name = f"{payer.first_name} {payer.last_name}"
-        students = db.query(models.Student).filter_by(parent_id=payer.id).all()
+        # Union Student.parent_id FK with Parent.student_ids (JSON) — in
+        # already-split databases the keeper row resolved via find_parent_by_jid
+        # may have no FK-linked students while student_ids is populated.
+        sids = payer.student_ids or []
+        if sids:
+            from sqlalchemy import or_
+            students = db.query(models.Student).filter(
+                or_(
+                    models.Student.parent_id == payer.id,
+                    models.Student.id.in_(sids),
+                )
+            ).all()
+        else:
+            students = db.query(models.Student).filter_by(parent_id=payer.id).all()
         children = [f"{s.name} ({s.grade})" for s in students] if students else [name]
         return name, children
     elif isinstance(payer, models.KnownContact):
