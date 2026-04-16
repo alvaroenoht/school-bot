@@ -529,6 +529,7 @@ async def list_activities(
     admin: dict = Depends(get_current_admin),
 ):
     fund = _fund_or_404(db, fundraiser_id)
+    _fundraiser_read_access(admin, fund)
     activities = (
         db.query(models.FundraiserActivity)
         .filter_by(fundraiser_id=fund.id)
@@ -578,8 +579,8 @@ async def create_activity(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    require_write_access(admin)
     fund = _fund_or_404(db, fundraiser_id)
+    _fundraiser_write_access(admin, fund, db)
     _require_fund_mode(fund)
     activity = models.FundraiserActivity(
         fundraiser_id=fund.id,
@@ -600,10 +601,10 @@ async def update_activity(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    require_write_access(admin)
     activity = db.query(models.FundraiserActivity).filter_by(id=activity_id).first()
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
+    _fundraiser_write_access(admin, activity.fundraiser, db)
     if req.name is not None:
         activity.name = req.name.strip()
     if req.description is not None:
@@ -620,10 +621,10 @@ async def delete_activity(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    require_write_access(admin)
     activity = db.query(models.FundraiserActivity).filter_by(id=activity_id).first()
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
+    _fundraiser_write_access(admin, activity.fundraiser, db)
     if activity.expenses:
         raise HTTPException(
             status_code=409,
@@ -648,8 +649,6 @@ async def create_expense(
     """Create an expense with ≥1 receipt. Multipart request.
     Rejects with 400 if no receipt files are attached.
     """
-    require_write_access(admin)
-
     files = [f for f in (receipts or []) if f and f.filename]
     if not files:
         raise HTTPException(status_code=400, detail="At least one receipt is required")
@@ -658,6 +657,7 @@ async def create_expense(
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
     fund = activity.fundraiser
+    _fundraiser_write_access(admin, fund, db)
     _require_fund_mode(fund)
 
     try:
@@ -714,10 +714,10 @@ async def update_expense(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    require_write_access(admin)
     expense = db.query(models.FundraiserExpense).filter_by(id=expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
+    _fundraiser_write_access(admin, expense.activity.fundraiser, db)
     if not _can_mutate_expense(expense, admin):
         raise HTTPException(
             status_code=409,
@@ -745,10 +745,10 @@ async def delete_expense(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    require_write_access(admin)
     expense = db.query(models.FundraiserExpense).filter_by(id=expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
+    _fundraiser_write_access(admin, expense.activity.fundraiser, db)
     if not _can_mutate_expense(expense, admin):
         raise HTTPException(
             status_code=409,
@@ -767,17 +767,17 @@ async def add_receipts(
     admin: dict = Depends(get_current_admin),
 ):
     """Attach additional receipts to an existing expense."""
-    require_write_access(admin)
     expense = db.query(models.FundraiserExpense).filter_by(id=expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
+    fund = expense.activity.fundraiser
+    _fundraiser_write_access(admin, fund, db)
 
     files = [f for f in (receipts or []) if f and f.filename]
     if not files:
         raise HTTPException(status_code=400, detail="At least one file is required")
 
     actor_jid = f"{admin['phone']}@c.us"
-    fund = expense.activity.fundraiser
     created = []
     try:
         for upload in files:
@@ -808,11 +808,11 @@ async def delete_receipt(
     db: Session = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    require_write_access(admin)
     rec = db.query(models.ExpenseReceipt).filter_by(id=receipt_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Receipt not found")
     expense = rec.expense
+    _fundraiser_write_access(admin, expense.activity.fundraiser, db)
     if not _can_mutate_expense(expense, admin):
         raise HTTPException(
             status_code=409,
@@ -836,6 +836,21 @@ MANUAL_PAYMENTS_DAILY_CAP = 20
 MANUAL_METHODS = ("cash", "bank", "other")
 MANUAL_PROOF_TYPES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 MANUAL_PROOF_MAX = 10 * 1024 * 1024  # 10 MB
+
+
+def _fundraiser_read_access(admin: dict, fund: models.Fundraiser) -> None:
+    """Any role (including soporte) in at least one target classroom, or
+    super-admin. Read endpoints that expose fundraiser-scoped data
+    (receipts, contacts, audit logs) must gate on this."""
+    if admin["is_super_admin"]:
+        return
+    audience = set(fund.audience_classroom_ids or [])
+    if not audience:
+        # Fundraiser with no audience set — only super-admin can read.
+        raise HTTPException(status_code=403, detail="Not authorized for this fundraiser")
+    my_ids = {r["classroom_id"] for r in admin["roles"]}
+    if not (audience & my_ids):
+        raise HTTPException(status_code=403, detail="Not authorized for this fundraiser")
 
 
 def _fundraiser_write_access(admin: dict, fund: models.Fundraiser, db: Session) -> None:
@@ -926,6 +941,7 @@ async def list_fundraiser_contacts(
     """Flat, deduped list of known contacts across the fundraiser's audience
     classrooms — used to populate the manual-payment payer picker."""
     fund = _fund_or_404(db, fundraiser_id)
+    _fundraiser_read_access(admin, fund)
     audience = fund.audience_classroom_ids or []
     if not audience:
         return []
@@ -985,6 +1001,18 @@ async def record_manual_payment(
     """
     fund = _fund_or_404(db, fundraiser_id)
     _fundraiser_write_access(admin, fund, db)
+
+    # Variable/catalog fundraisers depend on OrderItem rows for reporting,
+    # but manual payments have no product/quantity capture. Allowing them
+    # would create sales with money but no product lines — effectively
+    # unrecoverable for variable-fundraiser export. Block until (if ever)
+    # the modal learns to capture per-product quantities.
+    if fund.type == "variable":
+        raise HTTPException(
+            status_code=400,
+            detail="Manual payments are not supported for catalog/variable fundraisers. "
+                   "Use a fixed-amount or group-fund fundraiser instead.",
+        )
 
     if method not in MANUAL_METHODS:
         raise HTTPException(status_code=400, detail=f"method must be one of {MANUAL_METHODS}")
@@ -1178,7 +1206,7 @@ async def list_payment_audit(
     payment = db.query(models.Payment).filter_by(id=payment_id).first()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
-    # Any admin with a role (including soporte, for read) can view the audit
+    _fundraiser_read_access(admin, payment.fundraiser)
     rows = (
         db.query(models.PaymentAudit)
         .filter_by(payment_id=payment_id)
