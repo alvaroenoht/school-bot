@@ -487,7 +487,9 @@ def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
 
     is_group = chat_id and "@g.us" in chat_id
 
-    # Scope to classroom if in a group
+    # Scope to classroom if in a group — never fall back to all kids,
+    # otherwise a parent with children in multiple classrooms leaks
+    # one classroom's assignments into another group's Q&A.
     student_ids = all_ids
     if is_group:
         classroom = (
@@ -501,8 +503,7 @@ def _build_assignments_context(sender, db: Session, chat_id: str = "") -> str:
                 .filter(models.Student.id.in_(all_ids), models.Student.classroom_id == classroom.id)
                 .all()
             ]
-            if scoped:
-                student_ids = scoped
+            student_ids = scoped if scoped else []
 
     # Date range: this week Monday → next week Friday
     today = datetime.now(PANAMA_TZ).date()
