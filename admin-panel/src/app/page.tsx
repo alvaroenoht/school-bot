@@ -682,7 +682,7 @@ export default function AdminApp() {
 
   // ── Create handlers ───────────────────────────────────────────────────────
   const createFundraiser = async () => {
-    if (!fName.trim()) return;
+    if (!fName.trim() || !fAccountId) return;
     setLoading(true);
     try {
       const selectedAcc = accounts.find(a => String(a.id) === fAccountId);

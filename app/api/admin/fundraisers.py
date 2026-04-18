@@ -248,6 +248,8 @@ async def create_fundraiser(req: FundraiserCreate, db: Session = Depends(get_db)
         if any(cid not in my_write_classrooms for cid in req.audience_classroom_ids):
             raise HTTPException(status_code=403, detail="Not authorized")
 
+    if not req.account_number or not req.account_number.strip():
+        raise HTTPException(status_code=400, detail="account_number is required")
     code = _generate_code(req.name, db)
     mode = req.mode or "campaign"
     if mode not in ("campaign", "fund"):
