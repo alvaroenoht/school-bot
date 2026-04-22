@@ -272,8 +272,21 @@ async def create_fundraiser(req: FundraiserCreate, db: Session = Depends(get_db)
         for idx, p in enumerate(req.products):
             db.add(models.FundraiserProduct(fundraiser_id=db_fund.id, name=p.name, price=p.price, sort_order=idx))
     db.commit()
-    notify_fundraiser_created(db_fund, db)
     return {"id": db_fund.id, "code": code, "status": "active"}
+
+
+@router.post("/{fundraiser_id}/announce")
+async def announce_fundraiser(fundraiser_id: int, db: Session = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    require_write_access(admin)
+    fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
+    if not fund:
+        raise HTTPException(status_code=404)
+    if not admin["is_super_admin"]:
+        my_write_classrooms = [r["classroom_id"] for r in admin["roles"] if r["role"] != "soporte"]
+        if any(cid not in my_write_classrooms for cid in (fund.audience_classroom_ids or [])):
+            raise HTTPException(status_code=403, detail="Not authorized")
+    notify_fundraiser_created(fund, db)
+    return {"ok": True}
 
 
 @router.post("/{fundraiser_id}/remind")

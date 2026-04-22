@@ -5,7 +5,7 @@ import {
   Lock, MessageSquare, Plus, Activity, LayoutList, Users, Calendar,
   ChevronRight, Settings, LogOut, X, Tag, FileText, CalendarPlus,
   ChevronLeft, Filter, Edit2, User, CreditCard, Check, Trash2,
-  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2, Pencil, Download
+  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2, Pencil, Download, Megaphone
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import api from '@/lib/api';
@@ -32,7 +32,7 @@ const TRANSLATIONS = {
     parent_name: "Parent Name", student_name: "Student Name",
     primary_payer: "Main Contact", save: "Save", settings: "Settings",
     accounts: "Payment Accounts", edulink_setup: "School Portal (EduLink)",
-    remind: "Send Reminders", reopen: "Reopen", close: "Close",
+    remind: "Send Reminders", announce: "Announce to Group", reopen: "Reopen", close: "Close",
     report: "Live Report", fund_name: "Activity Name", fund_account: "Deposit To",
     fund_type: "Type", fund_amount: "Fixed Amount",
     fixed: "Fixed Amount", variable: "Catalog (Variable)",
@@ -48,7 +48,7 @@ const TRANSLATIONS = {
     event_title: "Event Title", event_description: "Description",
     event_date: "Date", event_location: "Location",
     portal_user: "Portal Username", portal_pass: "Portal Password",
-    reminder_sent: "Reminders Sent!", assistant_placeholder: "Ask about your groups...",
+    reminder_sent: "Reminders Sent!", announce_sent: "Announcement Sent!", assistant_placeholder: "Ask about your groups...",
     new_fundraiser: "New Fundraiser", new_form: "New Form", new_event: "New Event", new_classroom: "New Classroom",
     no_items: "No items yet", loading: "Loading...", send: "Send",
     account_label: "Account Label", account_type: "Type", account_details: "Details",
@@ -71,7 +71,7 @@ const TRANSLATIONS = {
     parent_name: "Nombre del Padre", student_name: "Nombre del Estudiante",
     primary_payer: "Principal", save: "Guardar", settings: "Configuración",
     accounts: "Cuentas de Pago", edulink_setup: "Portal Escolar (EduLink)",
-    remind: "Enviar Recordatorios", reopen: "Reabrir", close: "Cerrar",
+    remind: "Enviar Recordatorios", announce: "Anunciar al Grupo", reopen: "Reabrir", close: "Cerrar",
     report: "Reporte en Vivo", fund_name: "Nombre de Actividad", fund_account: "Depositar a",
     fund_type: "Tipo", fund_amount: "Monto Fijo",
     fixed: "Monto Fijo", variable: "Catálogo (Variable)",
@@ -87,7 +87,7 @@ const TRANSLATIONS = {
     event_title: "Título del Evento", event_description: "Descripción",
     event_date: "Fecha", event_location: "Ubicación",
     portal_user: "Usuario del Portal", portal_pass: "Contraseña del Portal",
-    reminder_sent: "¡Recordatorios Enviados!", assistant_placeholder: "Pregunta sobre tus grupos...",
+    reminder_sent: "¡Recordatorios Enviados!", announce_sent: "¡Anuncio Enviado!", assistant_placeholder: "Pregunta sobre tus grupos...",
     new_fundraiser: "Nueva Actividad", new_form: "Nuevo Formulario", new_event: "Nuevo Evento", new_classroom: "Nuevo Salón",
     no_items: "Sin elementos", loading: "Cargando...", send: "Enviar",
     account_label: "Etiqueta", account_type: "Tipo", account_details: "Detalles",
@@ -502,6 +502,15 @@ export default function AdminApp() {
         ? `/fundraisers/${selectedReport.id}/remind`
         : `/forms/${selectedReport.id}/remind`;
       await api.post(path); alert(t.reminder_sent);
+    } catch { setError('Failed'); }
+    finally { setLoading(false); }
+  };
+
+  const announceFundraiser = async () => {
+    setLoading(true);
+    try {
+      await api.post(`/fundraisers/${selectedReport.id}/announce`);
+      alert(t.announce_sent);
     } catch { setError('Failed'); }
     finally { setLoading(false); }
   };
@@ -1381,6 +1390,12 @@ export default function AdminApp() {
                     className="bg-white text-slate-900 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1.5 shadow-lg active:scale-95 transition-transform">
                     <Bell className="w-3 h-3" /> {t.remind}
                   </button>
+                  {selectedReport.type === 'fundraiser' && (
+                    <button onClick={announceFundraiser} disabled={loading}
+                      className="bg-white text-slate-900 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1.5 shadow-lg active:scale-95 transition-transform">
+                      <Megaphone className="w-3 h-3" /> {t.announce}
+                    </button>
+                  )}
                   <button onClick={downloadExcel} disabled={loading}
                     className="bg-white text-slate-900 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1.5 shadow-lg active:scale-95 transition-transform">
                     <Download className="w-3 h-3" /> Excel
