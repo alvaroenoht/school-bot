@@ -927,8 +927,25 @@ async def _escalate_to_agent(
     action_type = action.get("type")
 
     if action_type == "set_order" and action.get("cart"):
-        # Agent parsed the order — apply it and advance
-        cart = action["cart"]
+        # Agent parsed the order — apply it and advance.
+        # LLM returns {name,price,qty} only; resolve product_id from catalog so
+        # _finalize_payment can create OrderItem rows.
+        by_name = {p["name"].strip().lower(): p for p in products}
+        cart = []
+        for c in action["cart"]:
+            match = by_name.get(str(c.get("name", "")).strip().lower())
+            if not match:
+                continue
+            cart.append({
+                "product_id": match["id"],
+                "name": match["name"],
+                "price": match["price"],
+                "qty": int(c["qty"]),
+            })
+        if not cart:
+            _advance(session, session.step, data, db)
+            wa.send_text(chat_id, "❌ No pude identificar los productos de tu pedido. Responde con los números del catálogo.")
+            return
         total = sum(float(c["price"]) * c["qty"] for c in cart)
         data["cart"] = cart
         data["cart_total"] = str(round(total, 2))
