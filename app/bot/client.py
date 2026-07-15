@@ -85,8 +85,14 @@ class WahaClient:
                 r = requests.get(url, params={"session": self.session}, headers=self.headers, timeout=10)
                 if r.status_code == 200:
                     data = r.json()
-                    number = data.get("number") or data.get("id", "")
-                    return number.replace("@c.us", "").replace("+", "")
+                    # WAHA >= 2026.6 returns the real phone JID in "id" and the
+                    # lid digits in "number"; older builds had the phone in "number".
+                    cid = str(data.get("id") or "")
+                    if "@c.us" in cid:
+                        return cid.replace("@c.us", "").replace("+", "")
+                    number = str(data.get("number") or "")
+                    if number and number != jid.replace("@lid", ""):
+                        return number.replace("@c.us", "").replace("+", "")
             except Exception as e:
                 logger.warning(f"Could not resolve @lid {jid}: {e}")
             return jid.replace("@lid", "")
