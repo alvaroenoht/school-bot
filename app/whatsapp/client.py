@@ -72,6 +72,17 @@ class WahaClient:
         if "@c.us" in jid:
             return jid.replace("@c.us", "")
         if "@lid" in jid:
+            # Preferred: dedicated lid-mapping endpoint (all engines incl. GOWS)
+            try:
+                lid_num = jid.replace("@lid", "")
+                r = requests.get(f"{self.base_url}/api/{self.session}/lids/{lid_num}", headers=self.headers, timeout=10)
+                if r.status_code == 200:
+                    pn = str((r.json() or {}).get("pn") or "")
+                    if "@c.us" in pn:
+                        return pn.replace("@c.us", "").replace("+", "")
+            except Exception as e:
+                logger.warning(f"lids endpoint failed for {jid}: {e}")
+            # Fallback: contacts endpoint (WEBJS shape)
             try:
                 url = f"{self.base_url}/api/contacts"
                 r = requests.get(url, params={"session": self.session, "contactId": jid}, headers=self.headers, timeout=10)
