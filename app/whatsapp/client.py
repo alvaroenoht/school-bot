@@ -145,11 +145,14 @@ class WahaClient:
             r = requests.get(url, headers=self.headers, timeout=15)
             if r.status_code == 200:
                 participants = r.json()
-                result = [
-                    p.get("id", {}).get("_serialized", "")
-                    for p in participants
-                    if isinstance(p.get("id"), dict)
-                ]
+                # WEBJS returns id as {"_serialized": "..."}; GOWS/NOWEB return a plain string
+                result = []
+                for p in participants:
+                    pid = p.get("id")
+                    if isinstance(pid, dict):
+                        pid = pid.get("_serialized", "")
+                    if pid:
+                        result.append(pid)
                 with _participants_lock:
                     _participants_cache[group_id] = (time.time(), result)
                 return result

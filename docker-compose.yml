@@ -41,7 +41,9 @@ services:
   # ── WhatsApp gateway (waha) ───────────────────────────────────────────────────
   # Docs: https://waha.devlike.pro
   waha:
-    image: devlikeapro/waha:latest
+    # GOWS engine (Go WhatsApp, no browser) — WEBJS broke ecosystem-wide with the
+    # 2026-07-14 WhatsApp Web update (sessions logged out within hours).
+    image: devlikeapro/waha:gows
     container_name: waha
     restart: unless-stopped
     ports:
@@ -49,7 +51,7 @@ services:
     volumes:
       - waha-sessions:/app/.sessions
     environment:
-      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+      - WHATSAPP_DEFAULT_ENGINE=GOWS
       - WAHA_DASHBOARD_USERNAME=admin
       - WAHA_DASHBOARD_PASSWORD=schoolbot123
       - WAHA_API_KEY=schoolbot123
