@@ -156,12 +156,16 @@ class WahaClient:
             r = requests.get(url, headers=self.headers, timeout=15)
             if r.status_code == 200:
                 participants = r.json()
-                # WEBJS returns id as {"_serialized": "..."}; GOWS/NOWEB return a plain string
+                # WEBJS: {"id": {"_serialized": "..."}} / NOWEB: {"id": "..."} /
+                # GOWS: {"JID": "...@lid", "PhoneNumber": "...@s.whatsapp.net", ...}
                 result = []
                 for p in participants:
                     pid = p.get("id")
                     if isinstance(pid, dict):
                         pid = pid.get("_serialized", "")
+                    if not pid:
+                        pn = p.get("PhoneNumber") or ""
+                        pid = pn.replace("@s.whatsapp.net", "@c.us") if pn else (p.get("JID") or "")
                     if pid:
                         result.append(pid)
                 with _participants_lock:
