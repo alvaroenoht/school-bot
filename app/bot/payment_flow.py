@@ -287,6 +287,11 @@ async def handle(
     has_media = (payload or {}).get("hasMedia", False)
     _p = payload or {}
     media_type = _p.get("type") or _p.get("_data", {}).get("type") or ""
+    if has_media and not media_type:
+        # GOWS sends no "type" field — infer from the media mimetype
+        mimetype = (_p.get("media") or {}).get("mimetype") or ""
+        if mimetype.startswith("image/"):
+            media_type = "image"
 
     # ── Regex guards: reject bot-command-like inputs in name/order steps ──
     _CMD_RE = re.compile(r"^(pagar|pay|/|FORM-[A-Z0-9]+)\b", re.IGNORECASE)
