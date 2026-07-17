@@ -696,6 +696,11 @@ def _notify_manager_submission(
     db: Session,
 ):
     """Send a brief DM to the form creator when a parent submits."""
+    from app.config import get_settings
+    # Anti-ban: no proactive 1:1 DMs unless explicitly enabled. The creator can
+    # check submissions with `/form results`.
+    if not get_settings().allow_outbound_dms:
+        return
     creator_jid = form.created_by_jid
     if not creator_jid:
         return

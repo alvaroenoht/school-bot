@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.admin.auth import get_current_admin, require_write_access
 from app.bot.notifications import notify_fundraiser_created
+from app.config import get_settings
 from app.db import models
 from app.db.database import get_db
 from app.utils.s3_upload import upload_bytes_to_s3, generate_presigned_url
@@ -303,6 +304,17 @@ async def remind_unpaid(fundraiser_id: int, db: Session = Depends(get_db), admin
 
     paid_jids = {p.payer_jid for p in fund.payments if p.status in ("confirmed", "pending")}
     unpaid_jids = target_jids - paid_jids
+
+    # Anti-ban: never blast unsolicited 1:1 reminders unless explicitly enabled.
+    # This mass-DM pattern is what got the number banned. Post in the group instead.
+    if not get_settings().allow_outbound_dms:
+        return {
+            "sent_count": 0,
+            "disabled": True,
+            "unpaid_count": len(unpaid_jids),
+            "detail": "Los recordatorios 1:1 están desactivados para proteger el número. "
+                      "Publica el recordatorio en el grupo del salón.",
+        }
 
     msg = f"🔔 *Recordatorio: {fund.name}*\n\nAún no recibimos tu pago.\n\nPara pagar, responde con el código:\n*{fund.code}*"
     for jid in unpaid_jids:

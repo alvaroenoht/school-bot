@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str
 
+    # ── Anti-ban: outbound messaging policy ───────────────────────────────────
+    # When False (default), the bot NEVER sends proactive 1:1 messages to
+    # parents — it only replies to people who message it, and only posts
+    # proactively to groups. Unsolicited 1:1 blasts are what got the number
+    # banned (WhatsApp reads them as spam). Flip to True only if the number is
+    # on the official Cloud API where user-initiated conversations are allowed.
+    allow_outbound_dms: bool = False
+
     # ── Scheduler ─────────────────────────────────────────────────────────────
     timezone: str = "America/Panama"
     sync_time: str = "18:20"           # HH:MM

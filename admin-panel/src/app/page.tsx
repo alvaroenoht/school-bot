@@ -48,7 +48,7 @@ const TRANSLATIONS = {
     event_title: "Event Title", event_description: "Description",
     event_date: "Date", event_location: "Location",
     portal_user: "Portal Username", portal_pass: "Portal Password",
-    reminder_sent: "Reminders Sent!", announce_sent: "Announcement Sent!", assistant_placeholder: "Ask about your groups...",
+    reminder_sent: "Reminders Sent!", reminder_disabled: "Direct reminders are off to protect the number — post the code in the group instead.", announce_sent: "Announcement Sent!", assistant_placeholder: "Ask about your groups...",
     new_fundraiser: "New Fundraiser", new_form: "New Form", new_event: "New Event", new_classroom: "New Classroom",
     no_items: "No items yet", loading: "Loading...", send: "Send",
     account_label: "Account Label", account_type: "Type", account_details: "Details",
@@ -87,7 +87,7 @@ const TRANSLATIONS = {
     event_title: "Título del Evento", event_description: "Descripción",
     event_date: "Fecha", event_location: "Ubicación",
     portal_user: "Usuario del Portal", portal_pass: "Contraseña del Portal",
-    reminder_sent: "¡Recordatorios Enviados!", announce_sent: "¡Anuncio Enviado!", assistant_placeholder: "Pregunta sobre tus grupos...",
+    reminder_sent: "¡Recordatorios Enviados!", reminder_disabled: "Los recordatorios directos están desactivados para proteger el número — comparte el código en el grupo.", announce_sent: "¡Anuncio Enviado!", assistant_placeholder: "Pregunta sobre tus grupos...",
     new_fundraiser: "Nueva Actividad", new_form: "Nuevo Formulario", new_event: "Nuevo Evento", new_classroom: "Nuevo Salón",
     no_items: "Sin elementos", loading: "Cargando...", send: "Enviar",
     account_label: "Etiqueta", account_type: "Tipo", account_details: "Detalles",
@@ -501,8 +501,10 @@ export default function AdminApp() {
       const path = selectedReport.type === 'fundraiser'
         ? `/fundraisers/${selectedReport.id}/remind`
         : `/forms/${selectedReport.id}/remind`;
-      await api.post(path); alert(t.reminder_sent);
-    } catch { setError('Failed'); }
+      const res = await api.post(path);
+      if (res?.data?.disabled) { alert(res.data.detail || t.reminder_disabled); }
+      else { alert(t.reminder_sent); }
+    } catch (e: any) { alert(e?.response?.data?.detail || 'Failed'); }
     finally { setLoading(false); }
   };
 

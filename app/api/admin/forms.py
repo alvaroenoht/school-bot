@@ -8,6 +8,7 @@ from app.db import models
 from app.api.admin.auth import get_current_admin, require_write_access
 from app.whatsapp.client import WahaClient
 from app.bot.notifications import notify_form_created
+from app.config import get_settings
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/forms", tags=["forms"])
@@ -84,6 +85,16 @@ async def remind_incomplete(form_id: int, db: Session = Depends(get_db), admin: 
     submitted_jids = {s.respondent_jid for s in form.submissions if s.status == 'submitted'}
     unanswered_jids = target_jids - submitted_jids
 
+    # Anti-ban: no unsolicited 1:1 blasts. Post the form code in the group instead.
+    if not get_settings().allow_outbound_dms:
+        return {
+            "sent_count": 0,
+            "disabled": True,
+            "unanswered_count": len(unanswered_jids),
+            "detail": "Los recordatorios 1:1 están desactivados para proteger el número. "
+                      "Comparte el código del formulario en el grupo del salón.",
+        }
+
     # 3. Notify
     msg = f"🔔 *Recordatorio: {form.title}*\n\nAún no hemos recibido tu respuesta.\n\nPara completarlo, responde con el código:\n*{form.form_code}*"
     for jid in unanswered_jids:
@@ -100,6 +111,15 @@ async def start_form_for_all(form_id: int, db: Session = Depends(get_db), admin:
     if not form: raise HTTPException(status_code=404)
     if form.status not in ("open", "active"):
         raise HTTPException(status_code=400, detail="Form is not open/active")
+
+    # Anti-ban: this pushes an unsolicited form invite to every pending parent —
+    # exactly the mass-DM pattern that gets the number banned. Off by default.
+    if not get_settings().allow_outbound_dms:
+        raise HTTPException(
+            status_code=403,
+            detail="El envío directo a todos está desactivado para proteger el número. "
+                   "Comparte el código del formulario en el grupo del salón.",
+        )
 
     from app.bot.form_flow import start_from_code
 
