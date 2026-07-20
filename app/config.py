@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     summary_time: str = "18:30"        # HH:MM
     reminder_time: str = "07:00"       # HH:MM  Mon-Fri
 
+    # Seconds to wait between each weekly-summary send. Spreads ~24 messages
+    # across ~10 groups so a reinstated number doesn't post to many chats in a
+    # burst. Set 0 to disable staggering.
+    summary_stagger_seconds: int = 60
+
     # ── Google Calendar reminders ──────────────────────────────────────────
     calendar_reminder_time: str = "06:00"  # HH:MM daily job time
 

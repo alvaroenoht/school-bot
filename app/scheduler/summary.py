@@ -1,6 +1,7 @@
 """
 Summary and reminder senders — called by APScheduler jobs.
 """
+import asyncio
 import logging
 import os
 import tempfile
@@ -8,6 +9,7 @@ from datetime import datetime, timedelta
 
 import pytz
 
+from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db import models
 from app.utils.summary_formatter import generate_weekly_summary, generate_weekly_data
@@ -37,6 +39,12 @@ async def send_weekly_summaries():
 
         classrooms = db.query(models.Classroom).filter_by(is_active=True).all()
 
+        # Stagger sends so a reinstated number doesn't post to many groups in a
+        # burst. The gap sits *between* messages (globally, across classrooms),
+        # never before the first send. See settings.summary_stagger_seconds.
+        stagger = get_settings().summary_stagger_seconds
+        first_send = True
+
         for classroom in classrooms:
             if not classroom.whatsapp_group_id:
                 logger.warning(f"Classroom {classroom.id} has no WhatsApp group — skipping.")
@@ -54,11 +62,14 @@ async def send_weekly_summaries():
 
                 # Text summary
                 message = generate_weekly_summary(raw_conn, student_id, start, end)
-                if message:
-                    wa.send_text(classroom.whatsapp_group_id, message)
-                else:
+                if not message:
                     logger.warning(f"No assignments for student {student_id} in week {start}–{end}")
                     continue
+
+                if not first_send and stagger > 0:
+                    await asyncio.sleep(stagger)
+                first_send = False
+                wa.send_text(classroom.whatsapp_group_id, message)
 
                 # PDF generation + S3 upload
                 try:
