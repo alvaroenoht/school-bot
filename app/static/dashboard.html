@@ -230,15 +230,12 @@
   .sheet-summary{ color:var(--text); font-size:16px; line-height:1.55; }
   .mat-line{ color:var(--warn); font-size:15.5px; line-height:1.5; font-weight:600; }
   .seduca-text{
-    color:#DCD7EC; font-size:15.5px; line-height:1.62;
+    color:#DCD7EC; font-size:15.5px; line-height:1.66;
+    white-space:pre-wrap;
     background:var(--surface-2); border:1px solid var(--line);
-    border-radius:14px; padding:16px 17px;
+    border-radius:14px; padding:16px 18px;
     overflow-wrap:break-word; word-wrap:break-word;
   }
-  .seduca-text img{ max-width:100%; height:auto; border-radius:8px; }
-  .seduca-text a{ color:var(--brand); }
-  .seduca-text table{ width:100%; border-collapse:collapse; }
-  .seduca-text td, .seduca-text th{ border:1px solid var(--line); padding:6px 8px; }
   .sheet-actions{ display:flex; margin-top:22px; }
   .btn{
     -webkit-appearance:none; appearance:none; cursor:pointer;
@@ -540,23 +537,14 @@
       sheet.appendChild(s2);
     }
 
-    if(d.description_html && d.description_html.replace(/\s+/g, "") !== ""){
+    if(d.description_text && d.description_text.replace(/\s+/g, "") !== ""){
       var s3 = el("div", "sheet-block");
       s3.appendChild(el("h4", null, "Texto completo de SEDUCA"));
-      var body = el("div", "seduca-text");
-      body.innerHTML = d.description_html;   // sanitized server-side (bleach)
-      var links = body.getElementsByTagName("a");
-      for(var i = 0; i < links.length; i++){ links[i].target = "_blank"; links[i].rel = "noopener"; }
-      s3.appendChild(body);
+      s3.appendChild(el("div", "seduca-text", d.description_text));  // plain text, CSS pre-wrap
       sheet.appendChild(s3);
     }
 
     var actions = el("div", "sheet-actions");
-    if(d.short_url){
-      var open = el("a", "btn primary", "Abrir en SEDUCA");
-      open.href = d.short_url; open.target = "_blank"; open.rel = "noopener";
-      actions.appendChild(open);
-    }
     var close = el("button", "btn", "Cerrar");
     close.type = "button";
     close.onclick = closeModal;

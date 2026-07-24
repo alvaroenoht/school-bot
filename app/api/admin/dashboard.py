@@ -13,11 +13,12 @@ the iPad never depends on its own clock:
   * Sat/Sun               -> full next week (Mon-Fri)
 """
 from datetime import datetime, timedelta
+from html import unescape as html_unescape
 from pathlib import Path
 from typing import Optional
 
-import bleach
 import pytz
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -36,17 +37,6 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 PANAMA_TZ = pytz.timezone(get_settings().timezone)
 STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
-
-# HTML sanitizing allowlist for the full SEDUCA text (formatted render).
-ALLOWED_TAGS = [
-    "p", "br", "b", "strong", "i", "em", "u", "s", "ul", "ol", "li",
-    "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "blockquote", "hr",
-    "table", "thead", "tbody", "tr", "td", "th", "span", "div", "pre", "code",
-]
-ALLOWED_ATTRS = {
-    "a": ["href", "title"],
-    "img": ["src", "alt", "title"],
-}
 
 
 # ── Token auth (kiosk side) ──────────────────────────────────────────────────
@@ -102,6 +92,44 @@ def _safe_date_label(date_str: Optional[str]) -> Optional[str]:
         return translate_date(datetime.strptime(date_str, "%Y-%m-%d").date())
     except (ValueError, TypeError):
         return date_str
+
+
+def _html_to_text(raw: Optional[str]) -> str:
+    """Flatten SEDUCA's HTML description to clean, readable plain text.
+
+    Entities are decoded until stable first, so even double-escaped markup
+    (`&lt;p&gt;`) collapses to real tags that then get stripped — the kiosk shows
+    text, not markup. Blocks and <br> become newlines so it isn't crammed onto
+    one line.
+    """
+    if not raw:
+        return ""
+    # Decode entities repeatedly so double-encoded HTML surfaces as real tags.
+    text = raw
+    for _ in range(3):
+        decoded = html_unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+
+    soup = BeautifulSoup(text, "html.parser")
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+    for block in soup.find_all(["p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"]):
+        block.append("\n")
+    text = soup.get_text().replace("\xa0", " ")
+
+    # Trim each line and collapse runs of blank lines to a single separator.
+    out, blank = [], False
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            out.append(line)
+            blank = False
+        elif out and not blank:
+            out.append("")
+            blank = True
+    return "\n".join(out).strip()
 
 
 # ── Kiosk page + data ────────────────────────────────────────────────────────
@@ -180,13 +208,6 @@ def dashboard_assignment(
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     subject = db.query(models.Subject).filter_by(materia_id=a.subject_id).first()
-    description_html = bleach.clean(
-        a.description or "",
-        tags=ALLOWED_TAGS,
-        attributes=ALLOWED_ATTRS,
-        protocols=["http", "https", "mailto"],
-        strip=True,
-    )
     return {
         "id": a.id,
         "title": (a.title or "").strip(),
@@ -200,8 +221,7 @@ def dashboard_assignment(
         },
         "summary": a.summary,
         "materials": a.materials,
-        "short_url": a.short_url,
-        "description_html": description_html,
+        "description_text": _html_to_text(a.description),
     }
 
 

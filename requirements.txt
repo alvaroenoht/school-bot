@@ -29,11 +29,8 @@ reportlab==4.2.2
 # Settings
 pydantic-settings==2.5.2
 
-# HTML parsing (used in seduca_client)
+# HTML parsing (used in seduca_client + dashboard full-text cleanup)
 beautifulsoup4==4.12.3
-
-# HTML sanitizing (dashboard full-text rendering)
-bleach==6.1.0
 
 # AWS (Textract receipt OCR)
 boto3==1.35.0
