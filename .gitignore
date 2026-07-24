@@ -44,3 +44,6 @@ Thumbs.db
 # Coverage
 .coverage
 htmlcov/
+
+# Claude Code agent worktrees (ephemeral)
+.claude/worktrees/
