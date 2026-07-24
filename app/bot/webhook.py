@@ -28,6 +28,7 @@ from app.bot import admin_commands, qa_handler, registration, intent_agent
 from app.bot import known_contact, fundraiser_admin, payment_flow, form_admin, form_flow
 from app.bot import transparency_command
 from app.config import get_settings
+from app.utils.dashboard_tokens import build_dashboard_path, get_or_create_token
 from app.db.database import SessionLocal
 from app.db import models
 from app.utils.jid_utils import find_parent_by_jid, jid_equivalents
@@ -331,6 +332,9 @@ async def whatsapp_webhook(request: Request):
             if cmd.startswith("resumen"):
                 await _handle_parent_resumen(parent, chat_id, db)
                 return {"status": "ok"}
+            if cmd.startswith("dashboard"):
+                await _handle_parent_dashboard(parent, chat_id, db)
+                return {"status": "ok"}
             if cmd.startswith("fundraiser") or cmd.startswith("actividad"):
                 await fundraiser_admin.handle_command(raw_jid, chat_id, raw_text, db, caller_parent=parent)
                 return {"status": "ok"}
@@ -535,6 +539,36 @@ def _check_group_membership(raw_jid: str, db, wa: WahaClient) -> str | None:
     return None
 
 
+async def _handle_parent_dashboard(parent: models.Parent, chat_id: str, db) -> None:
+    """Reply with this parent's read-only iPad kiosk dashboard link.
+
+    Get-or-create so repeated asks return the same link (the paired iPad keeps
+    working). This is a reply to a parent-initiated DM, not a proactive message.
+    """
+    wa = WahaClient()
+    student_ids = parent.student_ids or []
+    if not student_ids:
+        wa.send_text(chat_id, "🔗 Aún no tienes estudiantes vinculados a tu cuenta, así que no puedo generar el panel.")
+        return
+
+    base = (get_settings().public_base_url or "").rstrip("/")
+    if not base:
+        logger.warning("PUBLIC_BASE_URL not set — cannot build parent dashboard link")
+        wa.send_text(chat_id, "⚠️ El panel aún no está configurado. Avísale al administrador.")
+        return
+
+    tok = get_or_create_token(db, student_ids=student_ids, created_by_jid=parent.whatsapp_jid, label="WhatsApp")
+    url = base + build_dashboard_path(tok.token)
+    wa.send_text(
+        chat_id,
+        "📱 *Tu panel de tareas*\n\n"
+        "Ábrelo en el iPad o tablet que quieras dejar siempre encendido:\n\n"
+        f"{url}\n\n"
+        "💡 En Safari toca *Compartir → Agregar a inicio* para verlo a pantalla completa. "
+        "El enlace mantiene la sesión iniciada y muestra las tareas de tus hijos automáticamente."
+    )
+
+
 async def _handle_parent_resumen(parent: models.Parent, chat_id: str, db) -> None:
     """Send weekly text summary + PDF link to the calling parent."""
     from datetime import datetime, timedelta
@@ -656,6 +690,7 @@ _PARENT_HELP = (
     "  `pagar` — ver actividades y formularios pendientes\n"
     "  `/mis pagos` — ver historial de tus pagos\n"
     "  `/resumen` — recibir resumen semanal + PDF\n"
+    "  `dashboard` — enlace del panel de tareas para iPad/tablet\n"
     "  `reporte CÓDIGO` — reporte de transparencia de un fondo\n"
     "  `/help` — mostrar este mensaje\n\n"
     "💬 O simplemente escríbeme tu pregunta sobre tareas y actividades."

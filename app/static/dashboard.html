@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tareas">
+<meta name="theme-color" content="#14121C">
+<meta name="robots" content="noindex">
+<title>EduLink · Tareas</title>
+<style>
+  :root{
+    --bg:#14121C;
+    --surface:#1E1B2A;
+    --surface-2:#262233;
+    --line:#332E45;
+    --text:#EDEAF5;
+    --muted:#9A93B0;
+    --muted-2:#6F6885;
+    --brand:#A78BFA;
+    --accent:#A78BFA;                 /* per-column override (solid) */
+    --accent-soft:rgba(167,139,250,0.15);
+    --accent-line:rgba(167,139,250,0.42);
+    --ok:#34D399;
+    --warn:#FBBF24;
+    --off:#F87171;
+    --radius:18px;
+    --font-display: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; }
+  body{
+    background:
+      radial-gradient(1100px 600px at 15% -10%, rgba(124,58,237,0.18), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(45,212,191,0.08), transparent 55%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    -webkit-text-size-adjust:100%;
+    overflow-x:hidden;
+  }
+
+  /* ── Top bar ─────────────────────────────────────────── */
+  .topbar{
+    position:-webkit-sticky; position:sticky; top:0; z-index:5;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 26px 16px;
+    padding-top:calc(18px + env(safe-area-inset-top, 0px));
+    background:linear-gradient(180deg, rgba(20,18,28,0.96), rgba(20,18,28,0.72) 70%, transparent);
+  }
+  .brand{
+    font-family:var(--font-display);
+    font-weight:700; letter-spacing:.5px;
+    color:var(--muted); font-size:15px;
+    white-space:nowrap; margin-right:14px;
+  }
+  .brand b{ color:var(--brand); }
+  .headline{ text-align:center; flex:1 1 auto; min-width:0; }
+  .mode-badge{
+    display:inline-block;
+    font-family:var(--font-display);
+    font-weight:800; font-size:13px; letter-spacing:2.5px;
+    color:var(--brand);
+    background:rgba(167,139,250,0.12);
+    border:1px solid rgba(167,139,250,0.35);
+    border-radius:999px;
+    padding:5px 14px 4px;
+    text-transform:uppercase;
+  }
+  .range{
+    font-family:var(--font-display);
+    font-weight:800;
+    font-size:32px;                    /* fallback for Safari < 13.1 */
+    font-size:clamp(22px, 3.2vw, 36px);
+    margin:8px 0 0; letter-spacing:.2px;
+    text-transform:capitalize;
+  }
+  .status{
+    display:flex; align-items:center;
+    background:var(--surface); border:1px solid var(--line);
+    color:var(--muted); border-radius:999px; padding:9px 15px;
+    font-size:13.5px; font-weight:600;
+    white-space:nowrap; cursor:pointer; margin-left:14px;
+    -webkit-appearance:none; appearance:none;
+  }
+  .status:active{ background:var(--surface-2); }
+  .dot{ width:9px; height:9px; border-radius:50%; background:var(--ok); margin-right:9px; }
+  .dot.pulse{ animation:pulse 2.4s infinite; }
+  .dot.offline{ background:var(--off); animation:none; box-shadow:none; }
+  @keyframes pulse{ 0%{box-shadow:0 0 0 0 rgba(52,211,153,0.5);} 70%{box-shadow:0 0 0 7px rgba(52,211,153,0);} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0);} }
+
+  /* ── Board ───────────────────────────────────────────── */
+  .board{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(340px, 1fr));
+    grid-gap:22px;
+    padding:8px 26px 34px;
+    padding-bottom:calc(34px + env(safe-area-inset-bottom, 0px));
+    align-items:start;
+  }
+  .column{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    overflow:hidden;
+  }
+  .col-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 18px;
+    border-bottom:1px solid var(--line);
+    background:var(--surface);
+    position:relative;
+  }
+  .col-head:before{
+    content:""; position:absolute; left:0; top:0; bottom:0; width:5px;
+    background:var(--accent);
+  }
+  .child-name{
+    font-family:var(--font-display);
+    font-weight:800; font-size:23px; letter-spacing:.2px;
+    padding-left:6px;
+  }
+  .chip-room{
+    font-size:12.5px; font-weight:700; letter-spacing:.4px;
+    color:var(--accent);
+    background:var(--accent-soft);
+    border:1px solid var(--accent-line);
+    border-radius:999px; padding:4px 11px;
+    white-space:nowrap; margin-left:12px;
+  }
+  .col-body{ padding:14px; }
+
+  .day-section{ margin-bottom:8px; }
+  .day-label{
+    display:flex; align-items:center;
+    font-family:var(--font-display);
+    font-weight:700; font-size:13.5px; letter-spacing:.6px;
+    color:var(--muted); text-transform:uppercase;
+    margin:6px 4px 10px;
+  }
+  .day-label .tick{ width:7px; height:7px; border-radius:50%; background:var(--accent); opacity:.9; margin-right:9px; }
+
+  /* ── Assignment card ─────────────────────────────────── */
+  .card{
+    display:block; width:100%; text-align:left;
+    background:var(--surface-2);
+    border:1px solid var(--line);
+    border-left:3px solid var(--accent);
+    border-radius:14px;
+    padding:13px 15px; margin-bottom:11px;
+    -webkit-appearance:none; appearance:none;
+    color:inherit; cursor:pointer;
+    transition:transform .12s ease, background .12s ease;
+  }
+  .card:last-child{ margin-bottom:0; }
+  .card:active{ transform:scale(0.985); background:#2C2740; }
+  .card-subject{
+    display:flex; align-items:center;
+    font-size:13px; font-weight:700; letter-spacing:.2px;
+    color:var(--muted); margin-bottom:5px;
+  }
+  .card-subject .emoji{ font-size:16px; margin-right:8px; }
+  .card-title{
+    font-family:var(--font-display);
+    font-weight:700; font-size:18px; line-height:1.28;
+  }
+  .card-summary{
+    color:var(--muted); font-size:14.5px; line-height:1.4; margin-top:5px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .card-foot{ display:flex; flex-wrap:wrap; margin-top:6px; }
+  .tag{
+    font-size:11.5px; font-weight:700; letter-spacing:.3px;
+    border-radius:7px; padding:3px 8px; margin:5px 7px 0 0;
+    background:rgba(255,255,255,0.05); border:1px solid var(--line);
+    color:var(--muted);
+  }
+  .tag.mat{ color:var(--warn); border-color:rgba(251,191,36,0.35); background:rgba(251,191,36,0.10); }
+
+  .empty{
+    color:var(--muted-2); font-size:14.5px; font-weight:600; padding:14px 6px;
+  }
+  .empty.week{ padding:8px 6px; font-size:13.5px; }
+
+  /* ── Full-screen overlay ─────────────────────────────── */
+  .overlay{
+    position:fixed; top:0; right:0; bottom:0; left:0; z-index:20;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:40px; background:var(--bg);
+  }
+  .overlay .glyph{ font-size:54px; margin-bottom:16px; }
+  .overlay h2{ font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 10px; }
+  .overlay p{ color:var(--muted); font-size:16px; max-width:440px; margin:0; line-height:1.5; }
+
+  /* ── Detail sheet ────────────────────────────────────── */
+  .modal{
+    position:fixed; top:0; right:0; bottom:0; left:0; z-index:30;
+    display:flex; align-items:flex-end; justify-content:center;
+    background:rgba(8,7,12,0.62);
+  }
+  .sheet{
+    width:100%; max-width:720px; max-height:92vh; overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    background:var(--surface); border:1px solid var(--line); border-bottom:none;
+    border-radius:22px 22px 0 0;
+    padding:22px 24px 30px;
+    padding-bottom:calc(30px + env(safe-area-inset-bottom, 0px));
+    box-shadow:0 -20px 60px rgba(0,0,0,0.45);
+    animation:rise .22s ease;
+  }
+  @keyframes rise{ from{ transform:translateY(28px); opacity:.5; } to{ transform:translateY(0); opacity:1; } }
+  .sheet-grip{ width:40px; height:5px; border-radius:3px; background:var(--line); margin:0 auto 16px; }
+  .sheet-subject{
+    display:flex; align-items:center;
+    color:var(--accent); font-weight:700; font-size:14px; letter-spacing:.2px;
+    margin-bottom:6px;
+  }
+  .sheet-subject .emoji{ font-size:19px; margin-right:9px; }
+  .sheet h3{ font-family:var(--font-display); font-weight:800; font-size:23px; line-height:1.25; margin:0 0 6px; }
+  .sheet-meta{ display:flex; flex-wrap:wrap; margin:6px 0 4px; }
+  .sheet-block{ margin-top:20px; }
+  .sheet-block h4{
+    font-size:12.5px; font-weight:800; letter-spacing:1.4px; text-transform:uppercase;
+    color:var(--muted-2); margin:0 0 9px;
+  }
+  .sheet-summary{ color:var(--text); font-size:16px; line-height:1.55; }
+  .mat-line{ color:var(--warn); font-size:15.5px; line-height:1.5; font-weight:600; }
+  .seduca-text{
+    color:#DCD7EC; font-size:15.5px; line-height:1.62;
+    background:var(--surface-2); border:1px solid var(--line);
+    border-radius:14px; padding:16px 17px;
+    overflow-wrap:break-word; word-wrap:break-word;
+  }
+  .seduca-text img{ max-width:100%; height:auto; border-radius:8px; }
+  .seduca-text a{ color:var(--brand); }
+  .seduca-text table{ width:100%; border-collapse:collapse; }
+  .seduca-text td, .seduca-text th{ border:1px solid var(--line); padding:6px 8px; }
+  .sheet-actions{ display:flex; margin-top:22px; }
+  .btn{
+    -webkit-appearance:none; appearance:none; cursor:pointer;
+    border-radius:13px; padding:14px 16px; font-size:16px; font-weight:700;
+    font-family:var(--font-display);
+    border:1px solid var(--line); background:var(--surface-2); color:var(--text);
+    flex:1 1 auto; text-align:center; text-decoration:none;
+  }
+  .btn + .btn{ margin-left:12px; }
+  .btn.primary{ background:var(--brand); border-color:var(--brand); color:#1a1424; }
+  .btn:active{ opacity:.85; }
+  .sheet-loading{ text-align:center; color:var(--muted); padding:50px 0; font-size:16px; }
+
+  .hidden{ display:none !important; }
+
+  @media (prefers-reduced-motion: reduce){
+    .dot.pulse{ animation:none; }
+    .sheet{ animation:none; }
+    .card{ transition:none; }
+  }
+</style>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">Edu<b>Link</b> · Tareas</div>
+      <div class="headline">
+        <span class="mode-badge" id="modeBadge">·</span>
+        <h1 class="range" id="rangeLabel">Cargando…</h1>
+      </div>
+      <button class="status" id="statusBtn" type="button" aria-label="Actualizar">
+        <span class="dot pulse" id="liveDot"></span>
+        <span id="updated">conectando…</span>
+      </button>
+    </header>
+    <main class="board" id="board"></main>
+  </div>
+
+  <div class="overlay hidden" id="overlay">
+    <div class="glyph" id="ovGlyph">🔗</div>
+    <h2 id="ovTitle"></h2>
+    <p id="ovMsg"></p>
+  </div>
+
+  <div class="modal hidden" id="modal">
+    <div class="sheet" id="sheet"></div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  var TOKEN_KEY = "edulink_dash_token";
+  var ACCENTS = ["#A78BFA", "#2DD4BF", "#FBBF24", "#FB7185", "#38BDF8"];
+  var BASE = location.pathname.replace(/\/+$/, "");   // e.g. /api/admin/dashboard
+  var POLL_MS = 5 * 60 * 1000;
+
+  var token = null;
+  var lastData = null;
+  var lastLoadedAt = null;
+  var online = true;
+
+  function $(id){ return document.getElementById(id); }
+  function el(tag, cls, txt){
+    var e = document.createElement(tag);
+    if(cls) e.className = cls;
+    if(txt !== undefined && txt !== null) e.textContent = txt;
+    return e;
+  }
+  function hexToRgba(hex, a){
+    var h = hex.replace("#", "");
+    if(h.length === 3){ h = h.charAt(0)+h.charAt(0)+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2); }
+    var r = parseInt(h.substring(0,2), 16);
+    var g = parseInt(h.substring(2,4), 16);
+    var b = parseInt(h.substring(4,6), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + a + ")";
+  }
+
+  // ── Token bootstrap: read from URL once, persist, strip from address bar ──
+  function initToken(){
+    var m = location.search.match(/[?&]token=([^&]+)/);
+    if(m){
+      token = decodeURIComponent(m[1]);
+      try{ localStorage.setItem(TOKEN_KEY, token); }catch(e){}
+      try{ history.replaceState({}, document.title, location.pathname); }catch(e){}
+    } else {
+      try{ token = localStorage.getItem(TOKEN_KEY); }catch(e){ token = null; }
+    }
+  }
+
+  function apiGet(path, onOk, onErr){
+    fetch(BASE + path, { headers: { "X-Dashboard-Token": token || "" }, cache: "no-store" })
+      .then(function(r){
+        if(r.status === 401){ onUnauthorized(); throw new Error("unauthorized"); }
+        if(!r.ok){ throw new Error("http " + r.status); }
+        return r.json();
+      })
+      .then(function(j){ onOk(j); })
+      .catch(function(e){ if(onErr) onErr(e); });
+  }
+
+  function onUnauthorized(){
+    try{ localStorage.removeItem(TOKEN_KEY); }catch(e){}
+    token = null;
+    showOverlay("📛", "Enlace no válido", "Este enlace fue revocado o expiró. Pide a un administrador que genere uno nuevo desde el panel.");
+  }
+
+  function showOverlay(glyph, title, msg){
+    $("ovGlyph").textContent = glyph;
+    $("ovTitle").textContent = title;
+    $("ovMsg").textContent = msg;
+    $("overlay").classList.remove("hidden");
+  }
+  function hideOverlay(){ $("overlay").classList.add("hidden"); }
+
+  // ── Load the board ──────────────────────────────────────────────────────
+  function load(){
+    if(!token){
+      showOverlay("🔗", "Falta el enlace", "Abre en este iPad el enlace del panel que genera un administrador. Se guardará para siempre.");
+      return;
+    }
+    apiGet("/board",
+      function(data){
+        online = true;
+        lastData = data;
+        lastLoadedAt = Date.now();
+        hideOverlay();
+        render(data);
+        updateStatus();
+      },
+      function(err){
+        if(String(err && err.message) === "unauthorized") return;
+        online = false;
+        updateStatus();
+        if(!lastData){
+          showOverlay("📡", "Sin conexión", "No se pudo cargar el panel. Se reintentará automáticamente.");
+        }
+      }
+    );
+  }
+
+  function badgeText(data){
+    if(data.relative === "today") return "Hoy";
+    if(data.relative === "tomorrow") return "Mañana";
+    if(data.mode === "week") return "Próxima semana";
+    var first = (data.range_label || "").split(" ")[0];
+    return first || "Actividades";
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────
+  function render(data){
+    $("modeBadge").textContent = badgeText(data);
+    $("rangeLabel").textContent = data.range_label || "";
+
+    var board = $("board");
+    board.textContent = "";
+
+    var children = data.children || [];
+    if(children.length === 0){
+      board.appendChild(emptyColumnNotice());
+      return;
+    }
+    for(var i = 0; i < children.length; i++){
+      board.appendChild(renderColumn(children[i], ACCENTS[i % ACCENTS.length], data.mode));
+    }
+  }
+
+  function emptyColumnNotice(){
+    var c = el("div", "column");
+    var b = el("div", "col-body");
+    b.appendChild(el("div", "empty", "Este enlace no tiene estudiantes vinculados."));
+    c.appendChild(b);
+    return c;
+  }
+
+  function renderColumn(child, accent, mode){
+    var col = el("div", "column");
+    col.style.setProperty("--accent", accent);
+    col.style.setProperty("--accent-soft", hexToRgba(accent, 0.15));
+    col.style.setProperty("--accent-line", hexToRgba(accent, 0.42));
+
+    var head = el("div", "col-head");
+    head.appendChild(el("div", "child-name", child.name || "—"));
+    if(child.classroom){ head.appendChild(el("div", "chip-room", child.classroom)); }
+    col.appendChild(head);
+
+    var body = el("div", "col-body");
+    var days = child.days || [];
+
+    if(mode === "week"){
+      for(var d = 0; d < days.length; d++){
+        body.appendChild(renderDaySection(child, days[d]));
+      }
+    } else {
+      var day = days[0];
+      var list = (day && day.assignments) ? day.assignments : [];
+      if(list.length === 0){
+        body.appendChild(el("div", "empty", "✅ Sin actividades"));
+      } else {
+        for(var a = 0; a < list.length; a++){
+          body.appendChild(renderCard(child.student_id, list[a]));
+        }
+      }
+    }
+    col.appendChild(body);
+    return col;
+  }
+
+  function renderDaySection(child, day){
+    var sec = el("div", "day-section");
+    var label = el("div", "day-label");
+    label.appendChild(el("span", "tick"));
+    label.appendChild(el("span", null, (day.weekday_es || "").toUpperCase()));
+    sec.appendChild(label);
+
+    var list = day.assignments || [];
+    if(list.length === 0){
+      sec.appendChild(el("div", "empty week", "— sin actividades"));
+    } else {
+      for(var a = 0; a < list.length; a++){
+        sec.appendChild(renderCard(child.student_id, list[a]));
+      }
+    }
+    return sec;
+  }
+
+  function renderCard(studentId, item){
+    var card = el("button", "card");
+    card.type = "button";
+
+    var subj = el("div", "card-subject");
+    var sub = item.subject || {};
+    subj.appendChild(el("span", "emoji", sub.icon || "📘"));
+    subj.appendChild(el("span", null, sub.name || ""));
+    card.appendChild(subj);
+
+    card.appendChild(el("div", "card-title", item.title || "Actividad"));
+    if(item.summary){ card.appendChild(el("div", "card-summary", item.summary)); }
+
+    var foot = el("div", "card-foot");
+    if(item.type_abbrev){ foot.appendChild(el("span", "tag", item.type_abbrev)); }
+    else if(item.type){ foot.appendChild(el("span", "tag", item.type)); }
+    if(item.materials){ foot.appendChild(el("span", "tag mat", "🎒 Materiales")); }
+    if(foot.childNodes.length){ card.appendChild(foot); }
+
+    card.onclick = function(){ openDetail(studentId, item.id); };
+    return card;
+  }
+
+  // ── Detail sheet ────────────────────────────────────────────────────────
+  function openDetail(studentId, id){
+    var modal = $("modal");
+    var sheet = $("sheet");
+    sheet.textContent = "";
+    sheet.appendChild(el("div", "sheet-loading", "Cargando actividad…"));
+    modal.classList.remove("hidden");
+
+    apiGet("/assignment?student_id=" + encodeURIComponent(studentId) + "&id=" + encodeURIComponent(id),
+      function(d){ renderSheet(d); },
+      function(err){
+        if(String(err && err.message) === "unauthorized"){ closeModal(); return; }
+        sheet.textContent = "";
+        sheet.appendChild(el("div", "sheet-grip"));
+        sheet.appendChild(el("div", "sheet-loading", "No se pudo cargar la actividad."));
+        sheet.appendChild(closeButtonRow());
+      }
+    );
+  }
+
+  function renderSheet(d){
+    var sheet = $("sheet");
+    sheet.textContent = "";
+    sheet.appendChild(el("div", "sheet-grip"));
+
+    var sub = d.subject || {};
+    var subj = el("div", "sheet-subject");
+    subj.appendChild(el("span", "emoji", sub.icon || "📘"));
+    subj.appendChild(el("span", null, sub.name || ""));
+    sheet.appendChild(subj);
+
+    sheet.appendChild(el("h3", null, d.title || "Actividad"));
+
+    var meta = el("div", "sheet-meta");
+    if(d.date_label){ meta.appendChild(el("span", "tag", d.date_label)); }
+    if(d.type){ meta.appendChild(el("span", "tag", d.type)); }
+    if(meta.childNodes.length){ sheet.appendChild(meta); }
+
+    if(d.summary){
+      var s1 = el("div", "sheet-block");
+      s1.appendChild(el("h4", null, "Resumen"));
+      s1.appendChild(el("div", "sheet-summary", d.summary));
+      sheet.appendChild(s1);
+    }
+
+    if(d.materials){
+      var s2 = el("div", "sheet-block");
+      s2.appendChild(el("h4", null, "Materiales"));
+      s2.appendChild(el("div", "mat-line", "🎒 " + d.materials));
+      sheet.appendChild(s2);
+    }
+
+    if(d.description_html && d.description_html.replace(/\s+/g, "") !== ""){
+      var s3 = el("div", "sheet-block");
+      s3.appendChild(el("h4", null, "Texto completo de SEDUCA"));
+      var body = el("div", "seduca-text");
+      body.innerHTML = d.description_html;   // sanitized server-side (bleach)
+      var links = body.getElementsByTagName("a");
+      for(var i = 0; i < links.length; i++){ links[i].target = "_blank"; links[i].rel = "noopener"; }
+      s3.appendChild(body);
+      sheet.appendChild(s3);
+    }
+
+    var actions = el("div", "sheet-actions");
+    if(d.short_url){
+      var open = el("a", "btn primary", "Abrir en SEDUCA");
+      open.href = d.short_url; open.target = "_blank"; open.rel = "noopener";
+      actions.appendChild(open);
+    }
+    var close = el("button", "btn", "Cerrar");
+    close.type = "button";
+    close.onclick = closeModal;
+    actions.appendChild(close);
+    sheet.appendChild(actions);
+  }
+
+  function closeButtonRow(){
+    var actions = el("div", "sheet-actions");
+    var close = el("button", "btn", "Cerrar");
+    close.type = "button";
+    close.onclick = closeModal;
+    actions.appendChild(close);
+    return actions;
+  }
+
+  function closeModal(){ $("modal").classList.add("hidden"); }
+
+  // ── Status line ─────────────────────────────────────────────────────────
+  function updateStatus(){
+    var dot = $("liveDot");
+    var txt = $("updated");
+    if(!online){
+      dot.className = "dot offline";
+      txt.textContent = "sin conexión";
+      return;
+    }
+    dot.className = "dot pulse";
+    if(!lastLoadedAt){ txt.textContent = "conectando…"; return; }
+    var mins = Math.floor((Date.now() - lastLoadedAt) / 60000);
+    if(mins <= 0) txt.textContent = "actualizado ahora";
+    else if(mins === 1) txt.textContent = "hace 1 min";
+    else txt.textContent = "hace " + mins + " min";
+  }
+
+  // ── Wiring ──────────────────────────────────────────────────────────────
+  $("statusBtn").onclick = load;
+  $("modal").onclick = function(ev){ if(ev.target === $("modal")) closeModal(); };
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden) load(); });
+  window.addEventListener("focus", load);
+
+  initToken();
+  load();
+  setInterval(load, POLL_MS);
+  setInterval(updateStatus, 30000);
+})();
+</script>
+</body>
+</html>

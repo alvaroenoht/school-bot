@@ -5,7 +5,7 @@ import {
   Lock, MessageSquare, Plus, Activity, LayoutList, Users, Calendar,
   ChevronRight, Settings, LogOut, X, Tag, FileText, CalendarPlus,
   ChevronLeft, Filter, Edit2, User, CreditCard, Check, Trash2,
-  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2, Pencil, Download, Megaphone
+  Bell, Globe, Key, DollarSign, ShoppingBag, CheckSquare, ToggleLeft, Home, Link2, Pencil, Download, Megaphone, Tablet, Copy
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import api from '@/lib/api';
@@ -241,6 +241,12 @@ export default function AdminApp() {
   const [selectedSeducaGroupId, setSelectedSeducaGroupId] = useState<number | null>(null);
   const [groupSeducaLinks, setGroupSeducaLinks] = useState<Record<number, any>>({});
 
+  // Dashboard iPad tokens
+  const [dashTokens, setDashTokens] = useState<any[]>([]);
+  const [dashLabel, setDashLabel] = useState('');
+  const [dashCreating, setDashCreating] = useState(false);
+  const [dashCopiedId, setDashCopiedId] = useState<number | null>(null);
+
   // Payment group modal
   const [selectedPayerGroup, setSelectedPayerGroup] = useState<any>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -337,7 +343,7 @@ export default function AdminApp() {
     setActiveTab(tab);
     setSelectedReport(null); setReportData(null);
     setSelectedGroup(null); setGroupMembers([]);
-    if (tab === 'settings') fetchSeducaGroups();
+    if (tab === 'settings') { fetchSeducaGroups(); fetchDashTokens(); }
   };
 
   const selectGroup = async (g: any) => {
@@ -371,6 +377,42 @@ export default function AdminApp() {
       const r = await api.get('/seduca/groups');
       setSeducaGroups(r.data || []);
     } catch {}
+  };
+
+  // ── Dashboard iPad tokens ─────────────────────────────────────────────────
+  const fetchDashTokens = async () => {
+    try {
+      const r = await api.get('/dashboard/tokens');
+      setDashTokens(r.data || []);
+    } catch {}
+  };
+
+  const createDashToken = async () => {
+    setDashCreating(true); setError('');
+    try {
+      const r = await api.post('/dashboard/tokens', { label: dashLabel || null });
+      setDashTokens(prev => [r.data, ...prev]);
+      setDashLabel('');
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error al generar el enlace'); }
+    finally { setDashCreating(false); }
+  };
+
+  const revokeDashToken = async (id: number) => {
+    try {
+      await api.delete(`/dashboard/tokens/${id}`);
+      setDashTokens(prev => prev.filter((tk) => tk.id !== id));
+    } catch (e: any) { setError(e?.response?.data?.detail || 'Error'); }
+  };
+
+  const copyDashLink = async (tk: any) => {
+    const url = window.location.origin + tk.path;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      window.prompt('Copia el enlace del dashboard:', url);
+    }
+    setDashCopiedId(tk.id);
+    setTimeout(() => setDashCopiedId(null), 1800);
   };
 
   const saveSeducaCreds = async () => {
@@ -1358,6 +1400,48 @@ export default function AdminApp() {
                           {g.bound_classroom_id
                             ? <span className="text-[9px] font-black uppercase bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">Vinculado</span>
                             : <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">Sin vincular</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="section-label flex items-center gap-2"><Tablet className="w-3 h-3" /> Dashboard iPad</h3>
+                <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 space-y-4 shadow-sm">
+                  <p className="text-[11px] font-bold text-slate-400 leading-relaxed">
+                    Genera un enlace de solo lectura con las tareas de tus hijos para dejar abierto siempre en un iPad. Mantiene la sesión ~1 año; puedes revocarlo cuando quieras.
+                  </p>
+                  <FlatInput label="Nombre del dispositivo (opcional)" icon={<Tablet className="w-4 h-4" />}
+                    value={dashLabel} onChange={setDashLabel} />
+                  <button
+                    onClick={createDashToken}
+                    disabled={dashCreating}
+                    className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-lg shadow-indigo-100 disabled:opacity-50">
+                    {dashCreating ? 'Generando...' : '+ Generar enlace'}
+                  </button>
+                  {dashTokens.length > 0 && (
+                    <div className="pt-2 space-y-2">
+                      {dashTokens.map((tk: any) => (
+                        <div key={tk.id} className="bg-slate-50 px-4 py-3 rounded-2xl flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-slate-700 truncate">{tk.label || 'Sin nombre'}</div>
+                            <div className="text-[10px] font-bold text-slate-400">
+                              {(tk.student_ids || []).length} estudiante(s) · {tk.last_used_at ? 'usado' : 'sin usar'}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 flex-shrink-0">
+                            <button onClick={() => copyDashLink(tk)}
+                              className="text-indigo-600 font-black text-[10px] uppercase flex items-center gap-1">
+                              {dashCopiedId === tk.id
+                                ? <><Check className="w-3 h-3" /> Copiado</>
+                                : <><Copy className="w-3 h-3" /> Copiar</>}
+                            </button>
+                            <button onClick={() => revokeDashToken(tk.id)} className="text-slate-300 hover:text-red-400 transition-colors">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>

@@ -6,6 +6,11 @@ class Settings(BaseSettings):
     # ── Admin ─────────────────────────────────────────────────────────────────
     admin_phone: str                    # e.g. "50766xxxxxx" (no + or spaces)
 
+    # Public origin the kiosk-dashboard links are built from. WhatsApp replies
+    # need an absolute URL, so this must be set for the parent `dashboard`
+    # command to work. e.g. "https://edulink.inbilt.co"
+    public_base_url: str = ""
+
     # ── OpenAI ────────────────────────────────────────────────────────────────
     openai_api_key: str
     openai_model: str = "gpt-4o-mini"

@@ -539,6 +539,26 @@ class SeducaGroup(Base):
     link = relationship("ClassroomSeducaLink", back_populates="seduca_group", uselist=False)
 
 
+class DashboardToken(Base):
+    """Long-lived, read-only token for the SEDUCA iPad kiosk dashboard.
+
+    Minted by an admin, scoped to a fixed set of student_ids, and used by the
+    always-on kiosk page instead of the 24 h admin JWT. Revocable (is_active)
+    and optionally expiring.
+    """
+    __tablename__ = "dashboard_tokens"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    token          = Column(String, unique=True, nullable=False, index=True)
+    label          = Column(String, nullable=True)          # e.g. "iPad cocina"
+    student_ids    = Column(JSON, nullable=False)           # scope, e.g. [2036, 7505]
+    created_by_jid = Column(String, nullable=True)
+    is_active      = Column(Boolean, default=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    last_used_at   = Column(DateTime, nullable=True)
+    expires_at     = Column(DateTime, nullable=True)        # null = never expires
+
+
 class ClassroomSeducaLink(Base):
     """1:1 binding between a Classroom (WhatsApp group) and a SeducaGroup.
     Controls when summaries are sent and whether DM Q&A is enabled.
