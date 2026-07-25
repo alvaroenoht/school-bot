@@ -104,8 +104,11 @@ def _html_to_text(raw: Optional[str]) -> str:
     """
     if not raw:
         return ""
+    # SEDUCA's description is scraped from a JS string literal, which leaves
+    # backslash-escaped punctuation behind — closing tags arrive as `<\/p>`.
+    # Undo those escapes so the tags parse instead of leaking as visible chars.
+    text = raw.replace("\\/", "/").replace('\\"', '"').replace("\\'", "'")
     # Decode entities repeatedly so double-encoded HTML surfaces as real tags.
-    text = raw
     for _ in range(3):
         decoded = html_unescape(text)
         if decoded == text:
