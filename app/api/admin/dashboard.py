@@ -8,8 +8,10 @@ Two audiences:
 
 Window rule (America/Panama, 7 AM school-start cutoff), computed server-side so
 the iPad never depends on its own clock:
-  * Mon-Thu before 07:00 -> today;  at/after 07:00 -> tomorrow  (single day)
-  * Fri before 07:00      -> Friday; at/after 07:00 -> full next week (Mon-Fri)
+  * Mon-Thu before 07:00 -> today + next school day     (2-day view)
+  * Mon-Thu at/after 07:00 -> tomorrow + the day after   (2-day view)
+  * Fri before 07:00      -> Friday + next Monday        (2-day view)
+  * Fri at/after 07:00    -> full next week (Mon-Fri)
   * Sat/Sun               -> full next week (Mon-Fri)
 """
 from datetime import datetime, timedelta
@@ -29,7 +31,7 @@ from app.config import get_settings
 from app.db import models
 from app.db.database import get_db
 from app.utils.dashboard_tokens import TOKEN_TTL_DAYS, build_dashboard_path, new_token
-from app.utils.dashboard_window import compute_window
+from app.utils.dashboard_window import compute_window, relative_label
 from app.utils.jid_utils import find_parent_by_jid
 from app.utils.summary_formatter import _TYPE_ABBREV, days_es, translate_date
 
@@ -153,6 +155,7 @@ def dashboard_board(
 ):
     now = datetime.now(PANAMA_TZ)
     win = compute_window(now)
+    today = now.date()
     student_ids = scope.student_ids or []
 
     subjects = {s.materia_id: (s.icon or "📘", s.name) for s in db.query(models.Subject).all()}
@@ -177,6 +180,8 @@ def dashboard_board(
                 "date": d.isoformat(),
                 "label": translate_date(d),
                 "weekday_es": days_es[d.strftime("%A")],
+                "day_num": d.day,
+                "relative": relative_label(today, d),
                 "assignments": [_serialize_assignment(a, subjects) for a in rows],
             })
 
@@ -191,6 +196,7 @@ def dashboard_board(
         "mode": win["mode"],
         "relative": win["relative"],
         "range_label": win["range_label"],
+        "badge": win["badge"],
         "generated_at": now.isoformat(),
         "children": children,
     }

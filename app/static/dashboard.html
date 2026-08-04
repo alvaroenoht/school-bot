@@ -135,6 +135,11 @@
   .col-body{ padding:14px; }
 
   .day-section{ margin-bottom:8px; }
+  /* Two-day view: a soft rule so "tomorrow" reads as its own block. */
+  .col-body.two-day .day-section + .day-section{
+    border-top:1px solid var(--line);
+    margin-top:16px; padding-top:14px;
+  }
   .day-label{
     display:flex; align-items:center;
     font-family:var(--font-display);
@@ -142,7 +147,9 @@
     color:var(--muted); text-transform:uppercase;
     margin:6px 4px 10px;
   }
+  .day-label.lead{ color:var(--text); font-size:15px; }
   .day-label .tick{ width:7px; height:7px; border-radius:50%; background:var(--accent); opacity:.9; margin-right:9px; }
+  .day-label .num{ margin-left:8px; color:var(--muted-2); font-weight:700; letter-spacing:.4px; }
 
   /* ── Assignment card ─────────────────────────────────── */
   .card{
@@ -378,11 +385,11 @@
   }
 
   function badgeText(data){
+    if(data.badge) return data.badge;                  // server-computed, e.g. "Hoy y mañana"
+    if(data.mode === "week") return "Próxima semana";
     if(data.relative === "today") return "Hoy";
     if(data.relative === "tomorrow") return "Mañana";
-    if(data.mode === "week") return "Próxima semana";
-    var first = (data.range_label || "").split(" ")[0];
-    return first || "Actividades";
+    return "Actividades";
   }
 
   // ── Render ──────────────────────────────────────────────────────────────
@@ -422,38 +429,39 @@
     if(child.classroom){ head.appendChild(el("div", "chip-room", child.classroom)); }
     col.appendChild(head);
 
-    var body = el("div", "col-body");
+    var week = (mode === "week");
+    var body = el("div", "col-body" + (week ? "" : " two-day"));
     var days = child.days || [];
 
-    if(mode === "week"){
-      for(var d = 0; d < days.length; d++){
-        body.appendChild(renderDaySection(child, days[d]));
-      }
-    } else {
-      var day = days[0];
-      var list = (day && day.assignments) ? day.assignments : [];
-      if(list.length === 0){
-        body.appendChild(el("div", "empty", "✅ Sin actividades"));
-      } else {
-        for(var a = 0; a < list.length; a++){
-          body.appendChild(renderCard(child.student_id, list[a]));
-        }
-      }
+    if(days.length === 0){
+      body.appendChild(el("div", "empty", "✅ Sin actividades"));
+    }
+    for(var d = 0; d < days.length; d++){
+      // Day view = today/tomorrow (or the next two school days), so each day
+      // still gets its own heading — the column is no longer a single list.
+      body.appendChild(renderDaySection(child, days[d], week));
     }
     col.appendChild(body);
     return col;
   }
 
-  function renderDaySection(child, day){
+  function dayHeading(day){
+    if(day.relative === "today") return "Hoy";
+    if(day.relative === "tomorrow") return "Mañana";
+    return day.weekday_es || "";
+  }
+
+  function renderDaySection(child, day, week){
     var sec = el("div", "day-section");
-    var label = el("div", "day-label");
+    var label = el("div", "day-label" + (week ? "" : " lead"));
     label.appendChild(el("span", "tick"));
-    label.appendChild(el("span", null, (day.weekday_es || "").toUpperCase()));
+    label.appendChild(el("span", null, dayHeading(day).toUpperCase()));
+    if(!week && day.day_num){ label.appendChild(el("span", "num", "· " + day.day_num)); }
     sec.appendChild(label);
 
     var list = day.assignments || [];
     if(list.length === 0){
-      sec.appendChild(el("div", "empty week", "— sin actividades"));
+      sec.appendChild(el("div", "empty" + (week ? " week" : ""), week ? "— sin actividades" : "✅ Sin actividades"));
     } else {
       for(var a = 0; a < list.length; a++){
         sec.appendChild(renderCard(child.student_id, list[a]));
