@@ -1622,9 +1622,14 @@ export default function AdminApp() {
                           className="flex justify-between items-center p-4 bg-slate-50/50 hover:bg-slate-100 rounded-2xl border border-slate-50 cursor-pointer active:scale-[0.98] transition-transform">
                           <div className="min-w-0">
                             <div className="font-black text-slate-800 text-xs truncate">{s.parent}</div>
-                            <div className="text-[10px] text-slate-400 font-bold">{s.student}</div>
+                            <div className="text-[10px] text-slate-400 font-bold truncate">{s.student}</div>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
+                            {reportData?.multi_classroom && s.classroom && (
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
+                                {s.classroom}
+                              </span>
+                            )}
                             <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${s.status === 'submitted' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
                               {s.status}
                             </span>

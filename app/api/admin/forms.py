@@ -227,6 +227,10 @@ async def get_report(form_id: int, db: Session = Depends(get_db), admin: dict = 
     form = db.query(models.Form).filter_by(id=form_id).first()
     if not form: raise HTTPException(status_code=404)
     subs = db.query(models.FormSubmission).filter_by(form_id=form_id).all()
+    audience_classroom_ids = [
+        a.classroom_id for a in db.query(models.FormAudience).filter_by(form_id=form_id).all()
+    ]
+    from app.utils.form_report import _get_submission_classroom
 
     def _resolve_student(s):
         if s.student:
@@ -247,7 +251,15 @@ async def get_report(form_id: int, db: Session = Depends(get_db), admin: dict = 
 
     return {
         "id": form.id, "title": form.title, "status": form.status,
-        "submissions": [{"id": s.id, "parent": s.respondent_name, "student": _resolve_student(s), "date": s.submitted_at, "status": s.status} for s in subs]
+        "multi_classroom": len(audience_classroom_ids) > 1,
+        "submissions": [{
+            "id": s.id,
+            "parent": s.respondent_name,
+            "student": _resolve_student(s),
+            "classroom": _get_submission_classroom(s, audience_classroom_ids, db),
+            "date": s.submitted_at,
+            "status": s.status,
+        } for s in subs]
     }
 
 @router.get("/{form_id}/submissions/{submission_id}")

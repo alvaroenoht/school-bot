@@ -49,6 +49,61 @@ def _get_submission_student_name(submission: models.FormSubmission, db: Session)
     return ""
 
 
+def _get_classroom_name(classroom_id: int | None, db: Session) -> str:
+    if not classroom_id:
+        return ""
+    classroom = db.query(models.Classroom).get(classroom_id)
+    if not classroom:
+        return ""
+    return classroom.display_name or classroom.name
+
+
+def _get_submission_classroom(
+    submission: models.FormSubmission,
+    audience_classroom_ids: list[int],
+    db: Session,
+) -> str:
+    """Resolve the classroom(s) a submission belongs to.
+
+    Matters for forms whose audience spans several classrooms — otherwise every
+    row looks alike. Falls back through: linked student → group membership →
+    single-classroom audience.
+    """
+    try:
+        if submission.student_id:
+            student = submission.student or db.query(models.Student).get(submission.student_id)
+            if student and student.classroom_id:
+                return _get_classroom_name(student.classroom_id, db)
+
+        normalized_jid = _normalize_jid(submission.respondent_jid)
+        contact = None
+        for c in db.query(models.KnownContact).all():
+            if _normalize_jid(c.jid) == normalized_jid:
+                contact = c
+                break
+        if contact:
+            q = db.query(models.KnownContactGroup).filter_by(contact_jid=contact.jid, active=True)
+            if audience_classroom_ids:
+                q = q.filter(models.KnownContactGroup.classroom_id.in_(audience_classroom_ids))
+            names = [
+                name
+                for name in (
+                    _get_classroom_name(g.classroom_id, db)
+                    for g in q.order_by(models.KnownContactGroup.classroom_id).all()
+                )
+                if name
+            ]
+            if names:
+                return ", ".join(names)
+
+        if len(audience_classroom_ids) == 1:
+            return _get_classroom_name(audience_classroom_ids[0], db)
+
+        return ""
+    except Exception:
+        return ""
+
+
 def _parents_in_audience(classroom_ids: list[int], db: Session) -> list[models.Parent]:
     """Active registered parents with at least one student in the given classrooms."""
     if not classroom_ids:
@@ -90,6 +145,9 @@ def _build_form_excel(form: models.Form, db: Session) -> bytes:
         .all()
     )
     submissions = db.query(models.FormSubmission).filter_by(form_id=form.id).all()
+    audience_classroom_ids = [
+        a.classroom_id for a in db.query(models.FormAudience).filter_by(form_id=form.id).all()
+    ]
 
     wb = Workbook()
     ws = wb.active
@@ -98,7 +156,7 @@ def _build_form_excel(form: models.Form, db: Session) -> bytes:
     header_fill = PatternFill("solid", fgColor="1F4E79")
     header_font = Font(color="FFFFFF", bold=True)
 
-    headers = ["Padre/Madre", "Estudiante", "Estado", "Enviado", "Iniciado"]
+    headers = ["Padre/Madre", "Estudiante", "Salón", "Estado", "Enviado", "Iniciado"]
     for q in questions:
         headers.append(q.text[:60].replace("\n", " "))
     ws.append(headers)
@@ -117,6 +175,7 @@ def _build_form_excel(form: models.Form, db: Session) -> bytes:
         row = [
             sub.respondent_name,
             student_name,
+            _get_submission_classroom(sub, audience_classroom_ids, db),
             sub.status,
             sub.submitted_at.strftime("%Y-%m-%d %H:%M") if sub.submitted_at else "",
             sub.started_at.strftime("%Y-%m-%d %H:%M") if sub.started_at else "",
