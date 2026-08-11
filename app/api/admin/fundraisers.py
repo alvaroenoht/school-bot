@@ -372,6 +372,7 @@ async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: d
     fund = db.query(models.Fundraiser).filter_by(id=fundraiser_id).first()
     if not fund: raise HTTPException(status_code=404)
     payments = db.query(models.Payment).filter_by(fundraiser_id=fundraiser_id).all()
+    from app.utils.fundraiser_report import _get_payment_group_name
 
     # Build unpaid/partially-paid kids list
     confirmed_payments = [p for p in payments if p.status in ("confirmed", "pending")]
@@ -444,12 +445,14 @@ async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: d
     return {
         "id": fund.id, "name": fund.name, "friendly_name": fund.friendly_name,
         "code": fund.code, "status": fund.status, "type": fund.type,
+        "multi_classroom": len(fund.audience_classroom_ids or []) > 1,
         "payments": [
             {
                 "id": p.id,
                 "payer_jid": p.payer_jid,
                 "parent": p.payer_name,
                 "child": p.child_name,
+                "classroom": _get_payment_group_name(p, fund, db),
                 "amount": p.amount,
                 "status": p.status,
                 "date": p.submitted_at,

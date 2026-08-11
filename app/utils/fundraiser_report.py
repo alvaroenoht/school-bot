@@ -9,7 +9,9 @@ For fixed fundraisers: simple rows with amounts, totals row at end.
 import io
 import logging
 import os
+import re
 import tempfile
+import unicodedata
 from datetime import datetime
 
 from openpyxl import Workbook
@@ -92,6 +94,17 @@ def _normalize_jid(jid: str | None) -> str:
     return jid.split("@", 1)[0].lstrip("+")
 
 
+def _normalize_child_name(name: str | None) -> str:
+    """Casefolded, accent-free, whitespace-collapsed name without a trailing
+    classroom hint like "Mia Calderón (2C)" — parents type these inconsistently."""
+    if not name:
+        return ""
+    stripped = re.sub(r"\([^)]*\)", " ", name)
+    decomposed = unicodedata.normalize("NFKD", stripped)
+    ascii_only = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return " ".join(ascii_only.casefold().split())
+
+
 def _get_classroom_name(classroom_id: int | None, db: Session) -> str:
     if not classroom_id:
         return ""
@@ -112,6 +125,14 @@ def _find_known_contact_by_jid(jid: str, db: Session) -> models.KnownContact | N
     for contact in db.query(models.KnownContact).all():
         if _normalize_jid(contact.jid) == normalized_jid:
             return contact
+
+    # Payer paid from {phone}@c.us but the contact is stored under an opaque
+    # {lid}@lid — the digits never match, so bridge through KnownContact.phone.
+    from app.utils.jid_utils import safe_phone
+
+    phone = safe_phone(jid or "", None)
+    if phone:
+        return db.query(models.KnownContact).filter_by(phone=phone).first()
     return None
 
 
@@ -139,12 +160,19 @@ def _get_payment_group_name(payment: models.Payment, fundraiser: models.Fundrais
                 query = query.filter(
                     models.KnownContactGroup.classroom_id.in_(fundraiser.audience_classroom_ids)
                 )
+            groups = query.order_by(models.KnownContactGroup.classroom_id).all()
+            # A parent with kids in several audience classrooms matches more than
+            # one group — pin it to the child this payment is for when we can.
+            if len(groups) > 1 and payment.child_name:
+                target = _normalize_child_name(payment.child_name)
+                for group in groups:
+                    if group.child_name and _normalize_child_name(group.child_name) == target:
+                        name = _get_classroom_name(group.classroom_id, db)
+                        if name:
+                            return name
             group_names = [
                 name
-                for name in (
-                    _get_classroom_name(group.classroom_id, db)
-                    for group in query.order_by(models.KnownContactGroup.classroom_id).all()
-                )
+                for name in (_get_classroom_name(g.classroom_id, db) for g in groups)
                 if name
             ]
             if group_names:

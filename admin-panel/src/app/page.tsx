@@ -1553,7 +1553,8 @@ export default function AdminApp() {
                       const payments: any[] = reportData?.payments || [];
                       const grouped = payments.reduce((acc: any, p: any) => {
                         const key = p.payer_jid || p.parent || 'unknown';
-                        if (!acc[key]) acc[key] = { name: p.parent, child: p.child, payments: [] };
+                        if (!acc[key]) acc[key] = { name: p.parent, child: p.child, classrooms: [], payments: [] };
+                        if (p.classroom && !acc[key].classrooms.includes(p.classroom)) acc[key].classrooms.push(p.classroom);
                         acc[key].payments.push(p);
                         return acc;
                       }, {} as Record<string, any>);
@@ -1580,6 +1581,11 @@ export default function AdminApp() {
                                 <div className="text-[10px] text-slate-400 font-bold">{g.child}</div>
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
+                                {reportData?.multi_classroom && g.classrooms.length > 0 && (
+                                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
+                                    {g.classrooms.join(', ')}
+                                  </span>
+                                )}
                                 <div className="text-right">
                                   <div className="text-xs font-black text-emerald-600">${total.toFixed(2)}</div>
                                   <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${allConfirmed ? 'bg-emerald-50 text-emerald-600' : anyConfirmed ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}>

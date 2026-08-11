@@ -81,6 +81,13 @@ def _get_submission_classroom(
             if _normalize_jid(c.jid) == normalized_jid:
                 contact = c
                 break
+        if not contact:
+            # {phone}@c.us respondent vs {lid}@lid contact — bridge on phone.
+            from app.utils.jid_utils import safe_phone
+
+            phone = safe_phone(submission.respondent_jid or "", None)
+            if phone:
+                contact = db.query(models.KnownContact).filter_by(phone=phone).first()
         if contact:
             q = db.query(models.KnownContactGroup).filter_by(contact_jid=contact.jid, active=True)
             if audience_classroom_ids:
