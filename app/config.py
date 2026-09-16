@@ -24,8 +24,10 @@ class Settings(BaseSettings):
     # OPENAI_INTENT_REASONING_EFFORT (falls back to the global value).
     openai_reasoning_effort: str = "none"
     openai_intent_reasoning_effort: str = ""
-    # Receipt OCR (vision) model.
-    openai_ocr_model: str = "gpt-4o"
+    # Receipt OCR (vision) model. gpt-5.4-mini at low image detail read all
+    # 60 sampled real receipts correctly and was the fastest perfect scorer
+    # (2026-09-16 benchmark); gpt-5.5/5.6 misread codes at low detail.
+    openai_ocr_model: str = "gpt-5.4-mini"
 
     # ── Waha (WhatsApp gateway) ───────────────────────────────────────────────
     waha_url: str = "http://waha:3000"
