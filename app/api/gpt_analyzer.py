@@ -86,6 +86,7 @@ def analyze_change(change: dict) -> dict:
     try:
         response = client.chat.completions.create(
             model=settings.openai_model,
+            **settings.openai_extra(),
             messages=[
                 {"role": "system", "content": CHANGE_SYSTEM_PROMPT},
                 {"role": "user", "content": CHANGE_USER_PROMPT.format(
@@ -129,6 +130,7 @@ def analyze_materials(title: str, description: str) -> dict:
     try:
         response = client.chat.completions.create(
             model=settings.openai_model,
+            **settings.openai_extra(),
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": USER_PROMPT.format(

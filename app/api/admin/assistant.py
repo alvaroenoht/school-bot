@@ -86,6 +86,7 @@ async def ask_assistant(
     try:
         response = client.chat.completions.create(
             model=settings.openai_model,
+            **settings.openai_extra(),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": req.text},

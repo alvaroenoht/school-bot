@@ -366,6 +366,7 @@ async def form_ai_analysis(form: models.Form, question: str, chat_id: str, db: S
     client = openai.OpenAI(api_key=settings.openai_api_key)
     response = client.chat.completions.create(
         model=settings.openai_model,
+        **settings.openai_extra(),
         messages=[
             {
                 "role": "system",

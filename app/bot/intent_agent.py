@@ -608,6 +608,7 @@ async def handle(
 
         response = client.chat.completions.create(
             model=settings.openai_intent_model,
+            **settings.openai_extra(),
             messages=messages,
             tools=TOOLS,
             tool_choice="auto",
@@ -669,6 +670,7 @@ async def handle(
 
                 followup = client.chat.completions.create(
                     model=settings.openai_intent_model,
+                    **settings.openai_extra(),
                     messages=messages,
                     temperature=0.3,
                     max_completion_tokens=500,
@@ -764,6 +766,7 @@ async def handle_payment_assist(chat_id: str, user_text: str, context: dict) -> 
     try:
         response = client.chat.completions.create(
             model=settings.openai_intent_model,
+            **settings.openai_extra(),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_text or "(sin texto — posiblemente imagen)"},
