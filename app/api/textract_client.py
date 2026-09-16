@@ -1,5 +1,5 @@
 """
-Receipt OCR — uses OpenAI GPT-4o vision to extract amount and confirmation code
+Receipt OCR — uses an OpenAI vision model (OPENAI_OCR_MODEL) to extract amount and confirmation code
 from mobile payment screenshots (Yappy, Nequi, bank apps, etc.).
 """
 import base64
@@ -8,6 +8,7 @@ import logging
 import re
 
 from app.config import get_settings
+from app.utils import llm
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ _SYSTEM_PROMPT = (
 
 def analyze_receipt(image_bytes: bytes) -> dict:
     """
-    Use OpenAI GPT-4o vision to parse a payment receipt image.
+    Use an OpenAI vision model to parse a payment receipt image.
 
     Returns:
         {
@@ -36,34 +37,30 @@ def analyze_receipt(image_bytes: bytes) -> dict:
     settings = get_settings()
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=settings.openai_api_key)
-
         b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{b64}",
-                                "detail": "low",
-                            },
-                        },
-                        {"type": "text", "text": "Extract the amount and confirmation code from this payment receipt."},
-                    ],
-                },
-            ],
-            max_tokens=100,
+        # Low detail is enough for receipt screenshots and keeps it fast.
+        # Keep effort "none": thinking adds latency without better reads.
+        response = llm.respond(
+            settings.openai_ocr_model,
+            [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:image/jpeg;base64,{b64}",
+                        "detail": "low",
+                    },
+                    {"type": "input_text", "text": "Extract the amount and confirmation code from this payment receipt."},
+                ],
+            }],
+            instructions=_SYSTEM_PROMPT,
+            effort="none",
+            max_output_tokens=100,
             temperature=0,
         )
 
-        raw = response.choices[0].message.content.strip()
+        raw = response.output_text.strip()
         # Strip markdown code fences if present
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
         parsed = json.loads(raw)

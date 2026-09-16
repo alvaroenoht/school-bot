@@ -1,13 +1,13 @@
 import json
 import logging
 from typing import Optional
-import openai
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db import models
 from app.api.admin.auth import get_current_admin
 from app.config import get_settings
+from app.utils import llm
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -25,7 +25,6 @@ async def ask_assistant(
 ):
     """Context-aware AI assistant for admins/delegates."""
     settings = get_settings()
-    client = openai.OpenAI(api_key=settings.openai_api_key)
 
     # 1. Gather Context
     context = {
@@ -84,17 +83,14 @@ async def ask_assistant(
     """
 
     try:
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            **settings.openai_extra(),
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": req.text},
-            ],
+        response = llm.respond(
+            settings.openai_model,
+            instructions=system_prompt,
+            input=req.text,
             temperature=0.5,
             timeout=30,
         )
-        return {"answer": response.choices[0].message.content}
+        return {"answer": response.output_text}
     except Exception as e:
         logger.error(f"Assistant error: {e}")
         raise HTTPException(status_code=500, detail="AI Assistant failed to respond.")

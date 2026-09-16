@@ -6,9 +6,8 @@ Extracts materials list and summary from assignment HTML descriptions.
 import json
 import logging
 
-import openai
-
 from app.config import get_settings
+from app.utils import llm
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +80,12 @@ def analyze_change(change: dict) -> dict:
     # type == "updated"
     old = change.get("old") or {}
     settings = get_settings()
-    client = openai.OpenAI(api_key=settings.openai_api_key)
 
     try:
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            **settings.openai_extra(),
-            messages=[
-                {"role": "system", "content": CHANGE_SYSTEM_PROMPT},
+        response = llm.respond(
+            settings.openai_model,
+            instructions=CHANGE_SYSTEM_PROMPT,
+            input=[
                 {"role": "user", "content": CHANGE_USER_PROMPT.format(
                     subject_name=change.get("subject_name", ""),
                     old_title=old.get("title", ""),
@@ -102,10 +99,10 @@ def analyze_change(change: dict) -> dict:
                 )},
             ],
             temperature=0.2,
-            response_format={"type": "json_object"},
+            json_mode=True,
             timeout=30,
         )
-        result = json.loads(response.choices[0].message.content)
+        result = json.loads(response.output_text)
         return {
             "worth_notifying": bool(result.get("worth_notifying", False)),
             "message": result.get("message", ""),
@@ -125,24 +122,21 @@ def analyze_materials(title: str, description: str) -> dict:
     API key is read from settings (env var), not passed as argument.
     """
     settings = get_settings()
-    client = openai.OpenAI(api_key=settings.openai_api_key)
 
     try:
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            **settings.openai_extra(),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+        response = llm.respond(
+            settings.openai_model,
+            instructions=SYSTEM_PROMPT,
+            input=[
                 {"role": "user", "content": USER_PROMPT.format(
                     title=title, description=description
                 )},
             ],
             temperature=0.2,
-            response_format={"type": "json_object"},
+            json_mode=True,
             timeout=30,
         )
-        result_text = response.choices[0].message.content
-        return json.loads(result_text)
+        return json.loads(response.output_text)
 
     except Exception as e:
         logger.error(f"GPT analysis failed for '{title}': {e}")

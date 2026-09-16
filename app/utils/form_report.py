@@ -13,11 +13,11 @@ import tempfile
 from collections import Counter
 from datetime import datetime
 
-import openai
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import models
+from app.utils import llm
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -363,33 +363,23 @@ async def form_ai_analysis(form: models.Form, question: str, chat_id: str, db: S
 
     context = _build_form_context(form, db)
 
-    client = openai.OpenAI(api_key=settings.openai_api_key)
-    response = client.chat.completions.create(
-        model=settings.openai_model,
-        **settings.openai_extra(),
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Eres un asistente de análisis de datos escolares. "
-                    "Se te proporcionan las respuestas de un formulario escolar. "
-                    "Responde la pregunta del usuario basándote ESTRICTAMENTE en los datos proporcionados. "
-                    "Responde en español, de forma clara y concisa. "
-                    "Si los datos no son suficientes para responder, dilo claramente. "
-                    "El contexto incluye una sección 'ESTADÍSTICAS AGREGADAS' con conteos exactos calculados en código — "
-                    "SIEMPRE usa esos números para responder preguntas de conteo o agrupación, nunca los recalcules tú mismo."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Datos del formulario:\n\n{context}\n\nPregunta: {question}",
-            },
-        ],
+    response = llm.respond(
+        settings.openai_model,
+        instructions=(
+            "Eres un asistente de análisis de datos escolares. "
+            "Se te proporcionan las respuestas de un formulario escolar. "
+            "Responde la pregunta del usuario basándote ESTRICTAMENTE en los datos proporcionados. "
+            "Responde en español, de forma clara y concisa. "
+            "Si los datos no son suficientes para responder, dilo claramente. "
+            "El contexto incluye una sección 'ESTADÍSTICAS AGREGADAS' con conteos exactos calculados en código — "
+            "SIEMPRE usa esos números para responder preguntas de conteo o agrupación, nunca los recalcules tú mismo."
+        ),
+        input=f"Datos del formulario:\n\n{context}\n\nPregunta: {question}",
         temperature=0.2,
-        max_completion_tokens=3000,
+        max_output_tokens=3000,
     )
 
-    reply = response.choices[0].message.content
+    reply = response.output_text
     wa.send_text(chat_id, reply)
     logger.info("FORM ai_analysis form_id=%d question_len=%d", form.id, len(question))
 

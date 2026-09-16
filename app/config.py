@@ -18,15 +18,14 @@ class Settings(BaseSettings):
     # Nano-tier models are unreliable at multi-tool disambiguation under a
     # long system prompt, so intent_agent uses this instead of openai_model.
     openai_intent_model: str = "gpt-4o-mini"
-    # Sent as `reasoning_effort` on every chat call when set. Reasoning models
-    # like gpt-5.6-luna need "none" to accept function tools and a custom
-    # temperature on /v1/chat/completions. Leave empty for non-reasoning
-    # models (gpt-4o-mini rejects the parameter).
-    openai_reasoning_effort: str = ""
-
-    def openai_extra(self) -> dict:
-        """Extra kwargs for chat.completions.create()."""
-        return {"reasoning_effort": self.openai_reasoning_effort} if self.openai_reasoning_effort else {}
+    # Reasoning effort for gpt-5.x / o-series models (ignored for others):
+    # none | minimal | low | medium | high. "none" is fastest and keeps
+    # custom temperatures. The parent-facing agent can think harder via
+    # OPENAI_INTENT_REASONING_EFFORT (falls back to the global value).
+    openai_reasoning_effort: str = "none"
+    openai_intent_reasoning_effort: str = ""
+    # Receipt OCR (vision) model.
+    openai_ocr_model: str = "gpt-4o"
 
     # ── Waha (WhatsApp gateway) ───────────────────────────────────────────────
     waha_url: str = "http://waha:3000"

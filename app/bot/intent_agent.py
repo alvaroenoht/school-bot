@@ -17,13 +17,13 @@ import re
 import time
 from datetime import datetime, timedelta
 
-import openai
 import pytz
 from sqlalchemy.orm import Session
 
 from app.bot import intent_tools, qa_handler
 from app.config import get_settings
 from app.db import models
+from app.utils import llm
 from app.whatsapp.client import WahaClient
 
 PANAMA_TZ = pytz.timezone("America/Panama")
@@ -66,85 +66,77 @@ def _append_history(chat_id: str, role: str, content: str):
     if len(entries) > _HISTORY_MAX_MSGS:
         _chat_history[chat_id] = entries[-_HISTORY_MAX_MSGS:]
 
-# ── OpenAI function-calling tool schemas ───────────────────────────────────────
+# ── OpenAI function-calling tool schemas (Responses API) ──────────────────────
 
 TOOLS = [
     {
         "type": "function",
-        "function": {
-            "name": "start_payment",
-            "description": (
-                "Inicia el flujo de pago para una actividad escolar. "
-                "Usa cuando el usuario quiere pagar, dice 'ya pagué', 'quiero pagar', "
-                "menciona comprobante, pregunta cuánto cuesta, o habla de dinero/cuenta/transferencia "
-                "en relación a una actividad."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "fundraiser_name": {
-                        "type": "string",
-                        "description": "Nombre o parte del nombre de la actividad a pagar",
-                    },
+        "name": "start_payment",
+        "description": (
+            "Inicia el flujo de pago para una actividad escolar. "
+            "Usa cuando el usuario quiere pagar, dice 'ya pagué', 'quiero pagar', "
+            "menciona comprobante, pregunta cuánto cuesta, o habla de dinero/cuenta/transferencia "
+            "en relación a una actividad."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fundraiser_name": {
+                    "type": "string",
+                    "description": "Nombre o parte del nombre de la actividad a pagar",
                 },
-                "required": ["fundraiser_name"],
             },
+            "required": ["fundraiser_name"],
         },
     },
     {
         "type": "function",
-        "function": {
-            "name": "start_receipt_flow",
-            "description": (
-                "Recibe o procesa un comprobante de pago. Usa cuando el usuario "
-                "envía una imagen que parece un recibo, dice que ya pagó y quiere "
-                "enviar comprobante, o envía una imagen sin contexto (probablemente recibo)."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "fundraiser_name": {
-                        "type": "string",
-                        "description": "Nombre de la actividad si se puede determinar del contexto",
-                    },
+        "name": "start_receipt_flow",
+        "description": (
+            "Recibe o procesa un comprobante de pago. Usa cuando el usuario "
+            "envía una imagen que parece un recibo, dice que ya pagó y quiere "
+            "enviar comprobante, o envía una imagen sin contexto (probablemente recibo)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fundraiser_name": {
+                    "type": "string",
+                    "description": "Nombre de la actividad si se puede determinar del contexto",
                 },
             },
         },
     },
     {
         "type": "function",
-        "function": {
-            "name": "start_form",
-            "description": (
-                "Inicia un formulario para que el padre lo responda directamente por chat. "
-                "Usa cuando el usuario dice que quiere responder/llenar/completar un formulario, "
-                "pregunta cómo responder uno, o menciona un formulario abierto por nombre (ej. "
-                "'jersey', 'tallas', 'encuesta'). Si hay más de un formulario abierto y el usuario "
-                "no identifica claramente cuál, pasa `form_title_or_code` con lo que dijo; la "
-                "herramienta pedirá aclaración si hace falta."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "form_title_or_code": {
-                        "type": "string",
-                        "description": "Código (FORM-XXXXX) o palabra del título del formulario",
-                    },
+        "name": "start_form",
+        "description": (
+            "Inicia un formulario para que el padre lo responda directamente por chat. "
+            "Usa cuando el usuario dice que quiere responder/llenar/completar un formulario, "
+            "pregunta cómo responder uno, o menciona un formulario abierto por nombre (ej. "
+            "'jersey', 'tallas', 'encuesta'). Si hay más de un formulario abierto y el usuario "
+            "no identifica claramente cuál, pasa `form_title_or_code` con lo que dijo; la "
+            "herramienta pedirá aclaración si hace falta."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "form_title_or_code": {
+                    "type": "string",
+                    "description": "Código (FORM-XXXXX) o palabra del título del formulario",
                 },
             },
         },
     },
     {
         "type": "function",
-        "function": {
-            "name": "list_active_fundraisers",
-            "description": (
-                "Lista las actividades escolares activas que están aceptando pagos. "
-                "Usa cuando el usuario pregunta qué puede pagar, qué actividades hay, "
-                "o quiere ver las opciones disponibles."
-            ),
-            "parameters": {"type": "object", "properties": {}},
-        },
+        "name": "list_active_fundraisers",
+        "description": (
+            "Lista las actividades escolares activas que están aceptando pagos. "
+            "Usa cuando el usuario pregunta qué puede pagar, qué actividades hay, "
+            "o quiere ver las opciones disponibles."
+        ),
+        "parameters": {"type": "object", "properties": {}},
     },
 ]
 
@@ -600,33 +592,33 @@ async def handle(
     _append_history(chat_id, "user", user_content)
 
     try:
-        client = openai.OpenAI(api_key=settings.openai_api_key)
-
-        # Build messages: system + recent history (already includes current msg)
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(_get_history(chat_id))
-
-        response = client.chat.completions.create(
-            model=settings.openai_intent_model,
-            **settings.openai_extra(),
-            messages=messages,
+        client = llm.client()
+        call = dict(
+            instructions=system_prompt,
+            effort=settings.openai_intent_reasoning_effort or None,
             tools=TOOLS,
-            tool_choice="auto",
             temperature=0.3,
-            max_completion_tokens=500,
+            max_output_tokens=500,
+            oa=client,
         )
 
-        message = response.choices[0].message
+        # Recent history already includes the current message
+        conversation = _get_history(chat_id)
+
+        response = llm.respond(
+            settings.openai_intent_model, conversation, tool_choice="auto", **call,
+        )
+        tool_calls = llm.function_calls(response)
 
         # ── Tool calls ────────────────────────────────────────────────────
-        if message.tool_calls:
+        if tool_calls:
             # Dispatch ALL tool calls (LLM may request multiple)
             has_data = False
             tool_results: list[tuple[str, str, str | None]] = []  # (call_id, fn_name, result)
 
-            for tool_call in message.tool_calls:
-                fn_name = tool_call.function.name
-                fn_args = json.loads(tool_call.function.arguments)
+            for tool_call in tool_calls:
+                fn_name = tool_call.name
+                fn_args = json.loads(tool_call.arguments or "{}")
 
                 logger.info(
                     "INTENT route=llm jid=%s intent=%s args=%s",
@@ -635,7 +627,7 @@ async def handle(
 
                 # Permission check
                 if intent_tools.is_admin_only(fn_name) and not is_admin:
-                    tool_results.append((tool_call.id, fn_name, "Comando solo para administradores."))
+                    tool_results.append((tool_call.call_id, fn_name, "Comando solo para administradores."))
                     continue
 
                 result = await intent_tools.dispatch(
@@ -650,7 +642,7 @@ async def handle(
                     message_id=message_id,
                     payload=payload,
                 )
-                tool_results.append((tool_call.id, fn_name, result))
+                tool_results.append((tool_call.call_id, fn_name, result))
                 if result is not None:
                     has_data = True
 
@@ -660,23 +652,23 @@ async def handle(
                 logger.info("INTENT route=llm_multiturn jid=%s tools=%d first=%s",
                             raw_jid, len(tool_results), first_fn)
 
-                messages.append(message.model_dump())
+                # Pass back the model's output items (function calls and any
+                # reasoning) followed by one result per call.
+                followup_input = conversation + [
+                    item.model_dump(exclude_none=True) for item in response.output
+                ]
                 for call_id, fn_name, result in tool_results:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": result or _TOOL_HISTORY_NOTE.get(fn_name, f"[{fn_name} ejecutado]"),
+                    followup_input.append({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": result or _TOOL_HISTORY_NOTE.get(fn_name, f"[{fn_name} ejecutado]"),
                     })
 
-                followup = client.chat.completions.create(
-                    model=settings.openai_intent_model,
-                    **settings.openai_extra(),
-                    messages=messages,
-                    temperature=0.3,
-                    max_completion_tokens=500,
+                followup = llm.respond(
+                    settings.openai_intent_model, followup_input, tool_choice="none", **call,
                 )
 
-                reply = followup.choices[0].message.content
+                reply = followup.output_text
                 if reply:
                     _append_history(chat_id, "assistant", reply)
                     wa.send_text(chat_id, reply)
@@ -692,10 +684,11 @@ async def handle(
             return
 
         # ── Plain text response ───────────────────────────────────────────
-        if message.content:
+        reply = response.output_text
+        if reply:
             logger.info("INTENT route=llm_text jid=%s", raw_jid)
-            _append_history(chat_id, "assistant", message.content)
-            wa.send_text(chat_id, message.content)
+            _append_history(chat_id, "assistant", reply)
+            wa.send_text(chat_id, reply)
             return
 
         # ── Empty response — should not happen, but handle gracefully ─────
@@ -737,7 +730,6 @@ async def handle_payment_assist(chat_id: str, user_text: str, context: dict) -> 
       {"type": "natural_reply", "text": "…"} — send freeform message
     """
     settings = get_settings()
-    client = openai.OpenAI(api_key=settings.openai_api_key)
 
     step = context.get("step", "unknown")
     reason = context.get("reason", "unknown")
@@ -764,18 +756,15 @@ async def handle_payment_assist(chat_id: str, user_text: str, context: dict) -> 
     )
 
     try:
-        response = client.chat.completions.create(
-            model=settings.openai_intent_model,
-            **settings.openai_extra(),
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_text or "(sin texto — posiblemente imagen)"},
-            ],
+        response = llm.respond(
+            settings.openai_intent_model,
+            user_text or "(sin texto — posiblemente imagen)",
+            instructions=system,
             temperature=0.2,
             timeout=20,
-            response_format={"type": "json_object"},
+            json_mode=True,
         )
-        raw = response.choices[0].message.content
+        raw = response.output_text
         action = json.loads(raw)
         logger.info("Payment assist action=%s reason=%s chat=%s", action.get("type"), reason, chat_id)
         return action
