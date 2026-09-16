@@ -3,6 +3,9 @@ S3 upload utilities — upload PDF reports and generate presigned download URLs.
 Uses AWS credentials from .env (already configured for Textract).
 """
 import logging
+import re
+from functools import lru_cache
+from urllib.parse import unquote
 
 import boto3
 
@@ -10,7 +13,10 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_S3_URL = re.compile(r"^https://([^./]+)\.s3[^/]*\.amazonaws\.com/([^?]+)")
 
+
+@lru_cache()
 def _get_s3_client():
     settings = get_settings()
     return boto3.client(
@@ -66,3 +72,21 @@ def generate_presigned_url(
         ExpiresIn=expiration,
     )
     return url
+
+
+def fresh_url(stored_url: str | None, s3_key: str | None = None) -> str | None:
+    """Return a newly signed URL for a stored S3 object.
+
+    Receipt/proof rows store the presigned URL from upload time, which
+    expires after 7 days. Re-sign from the key (or the key embedded in the
+    stored URL) whenever it is shown. Returns None for values that aren't
+    links (early rows stored a WhatsApp message id).
+    """
+    if s3_key:
+        return generate_presigned_url(s3_key)
+    if not stored_url:
+        return None
+    m = _S3_URL.match(stored_url)
+    if not m:
+        return stored_url if stored_url.startswith("http") else None
+    return generate_presigned_url(unquote(m.group(2)), bucket=m.group(1))

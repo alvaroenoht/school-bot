@@ -13,7 +13,7 @@ from app.bot.notifications import notify_fundraiser_created
 from app.config import get_settings
 from app.db import models
 from app.db.database import get_db
-from app.utils.s3_upload import upload_bytes_to_s3, generate_presigned_url
+from app.utils.s3_upload import fresh_url, upload_bytes_to_s3, generate_presigned_url
 from app.whatsapp.client import WahaClient
 
 logger = logging.getLogger(__name__)
@@ -457,11 +457,11 @@ async def get_report(fundraiser_id: int, db: Session = Depends(get_db), admin: d
                 "status": p.status,
                 "date": p.submitted_at,
                 "confirmation_code": p.confirmation_code,
-                "receipt_media_url": p.receipt_media_url,
+                "receipt_media_url": fresh_url(p.receipt_media_url),
                 "entry_method": p.entry_method,
                 "recorded_by_jid": p.recorded_by_jid,
                 "method_note": p.method_note,
-                "manual_proof_url": p.manual_proof_url,
+                "manual_proof_url": fresh_url(p.manual_proof_url, p.manual_proof_s3_key),
                 "voided_at": p.voided_at,
                 "voided_by_jid": p.voided_by_jid,
                 "void_reason": p.void_reason,
@@ -1146,7 +1146,7 @@ async def record_manual_payment(
         "entry_method": payment.entry_method,
         "recorded_by_jid": payment.recorded_by_jid,
         "method_note": payment.method_note,
-        "manual_proof_url": payment.manual_proof_url,
+        "manual_proof_url": fresh_url(payment.manual_proof_url, payment.manual_proof_s3_key),
         "submitted_at": payment.submitted_at,
     }
 
